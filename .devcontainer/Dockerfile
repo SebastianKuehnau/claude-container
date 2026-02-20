@@ -8,7 +8,7 @@ ARG VARIANT=base
 # ========================================
 # BASE-COMMON STAGE (shared dependencies)
 # ========================================
-FROM node:${NODE_VERSION}-bookworm as base-common
+FROM node:${NODE_VERSION}-bookworm AS base-common
 
 ARG TZ=Europe/Helsinki
 ARG CLAUDE_CODE_VERSION=latest
@@ -145,7 +145,7 @@ RUN echo '\n# Claude Code aliases' >> /home/node/.zshrc \
 # ========================================
 # BASE STAGE (current container)
 # ========================================
-FROM base-common as base
+FROM base-common AS base
 
 USER root
 
@@ -170,7 +170,7 @@ CMD ["/bin/zsh"]
 # ========================================
 # DIND STAGE (Docker-in-Docker)
 # ========================================
-FROM base-common as dind
+FROM base-common AS dind
 
 USER root
 
