@@ -37,6 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim \
     wget \
     zsh \
+    screen \
+    htop \
     # Firewall tools
     iptables \
     dnsutils \
