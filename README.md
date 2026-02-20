@@ -1,3 +1,222 @@
+This container is based on: https://code.claude.com/docs/en/devcontainer and https://github.com/anthropics/claude-code/tree/main/.devcontainer but somewhat heavily modified. 
+
+# TL;DR - just get me claude in a contaner, I'll think of security later!
+
+Make a folder with a workspace folder inside it: 
+
+```
+mkdir -p claude-container-instance/workspace claude-container-instance/dot-claude claude-container-instance/m2-cache 
+```
+go into the folder and create a .env file
+
+```
+cd claude-container-instance
+nano .env
+```
+
+in the env file copy the following (.env.example): 
+
+```
+# Claude Container Environment Variables
+# Copy this file to .env and customize as needed
+# Usage: docker run --env-file .env ...
+
+# Claude configuration directory (inside container)
+CLAUDE_CONFIG_DIR=/home/node/.claude
+
+# GitHub Personal Access Token for gh CLI
+# GH_TOKEN=ghp_your_token_here
+
+# Git identity (used for commits inside the container)
+# GIT_USER_NAME=Your Name
+# GIT_USER_EMAIL=your.email@example.com
+
+# Timezone (defaults to Europe/Helsinki if not set)
+# TZ=America/New_York
+
+# Skip firewall initialization (set to 1 to disable)
+SKIP_FIREWALL=1
+
+# Playwright browsers path (pre-installed in image)
+PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+
+# Skip Playwright browser downloads (browsers are pre-installed)
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# Notification URL (e.g., ntfy.sh) - called when Claude is idle or needs permission
+# Supports any URL that accepts POST requests (ntfy.sh, webhooks, etc.)
+# NOTIFICATION_URL=https://ntfy.sh/your-topic-here
+
+# Vaadin Pro/Commercial key (for Charts, Board, Acceleration Kits, etc.)
+# Alternatively, mount a ~/.vaadin/proKey file into the container
+# VAADIN_PRO_KEY=your-pro-key-here
+
+# Node.js memory limit
+NODE_OPTIONS=--max-old-space-size=4096
+```
+
+For a first test the above config disables the firewall, enables chrome CDP debuggin on port 9222 (if enabled inside the container etc). 
+
+* If you want to commit inside the container, you probably want to set the `GIT_USER` related params
+* If you want to use Vaadin commercial components, either set your `proKey` (just the value starting with `pro-` in the environment variable, or later inside the contaier `mkdir -p ~/.vaadin && nano ~/node/.vaadin/proKey` and copy your entire prokey from a different system (or follow the browser process to sign in...)
+* `GH_TOKEN` is there if you want to use Github fine graned PATs for limited access to GH from within the container
+* etc..
+
+
+then run the prebuilt container with (caches the .m2 folder on the host for less downloads on second try): 
+
+```
+docker run -it --rm \
+  --cap-add=NET_ADMIN \
+  --cap-add=NET_RAW \
+  --env-file .env \
+  -v "./dot-claude:/home/node/.claude" \
+  -v "./m2-cache:/home/node/.m2" \
+  -v "./workspace:/workspace" \
+  -p 9222:9222 \
+  ghcr.io/petrixh/claude-container:latest
+```
+
+
+Clone your projects under `/workspace`, run claude do stuff :) 
+
+Read what the `entrypoint.sh` command tells you about versions if wou want to use built-in predownloaded browers, playwright MCP in headless mode etc. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
+
+# TL;DR I just want a devcontainer from my IDE/Codespaces optinally with docker-in-docker fully understanding the risks it might bring
+
+Start by checking out your project in a directory, then inside that directory, minimally you only need the `.devcontainer` directory, but the others reduce future downloads, preserves things etc. 
+
+```
+mkdir .devcontainer dot-claude m2-cache 
+```
+
+then create a deccontainer file under `.devcontainer/devcontainer.json` with the content: 
+
+```
+{
+  "name": "Claude Code Sandbox",
+  "image": "ghcr.io/petrixh/claude-container:latest",
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW",
+    "--env-file=.devcontainer/.env", //if desired to setup vars in a file instead, comment out containerEnv-entries if used
+  ],
+// If you want to bring env variables from your current environment to the devconatiner
+  // "containerEnv": {
+  //   "SKIP_FIREWALL": "1",
+  //   "GH_TOKEN": "${localEnv:GH_TOKEN}",
+  //   "GIT_USER_NAME": "${localEnv:GIT_USER_NAME}",
+  //   "GIT_USER_EMAIL": "${localEnv:GIT_USER_EMAIL}",
+  //   "NODE_OPTIONS": "--max-old-space-size=4096",
+  //   "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+  //   "PLAYWRIGHT_BROWSERS_PATH": "/opt/playwright-browsers",
+  //   "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
+  //   //"VAADIN_PRO_KEY": "${localEnv:VAADIN_PRO_KEY}",
+  //   "NOTIFICATION_URL": "${localEnv:NOTIFICATION_URL}",
+  // },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "vscjava.vscode-maven"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "editor.formatOnSave": true,
+        "java.configuration.detectJdksAtStart": true
+      }
+    }
+  },
+// If you need docker inside the dev container, does open up options for the AI to do all kinds of things... 
+//  "features": {
+//    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+//      "version": "latest",
+//      "enableNonRootDocker": "true",
+//      "moby": "false"
+//    }
+//  },
+  "remoteUser": "node",
+  "mounts": [
+    "source=./m2-cache,target=/home/vscode/.m2,type=bind,consistency=cached",
+    //     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
+    "source=./dot-claude,target=/home/node/.claude,type=bind,consistency=cached"
+  ],
+  "forwardPorts": [
+    9222
+  ],
+  "portsAttributes": {
+    "9222": {
+      "label": "Playwright CDP",
+      "onAutoForward": "silent"
+    }
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+  "postStartCommand": "/usr/local/bin/entrypoint.sh"
+}
+```
+
+create an `.env` file under `.devcontainer` and add it to .gitignore immediatlely! Or create it somewhere else and map it at the top in the `runArgs` section. Inside the .env file look at `.env.example` or just copy paste: 
+
+```
+# Claude Container Environment Variables
+# Copy this file to .env and customize as needed
+# Usage: docker run --env-file .env ...
+
+# Claude configuration directory (inside container)
+CLAUDE_CONFIG_DIR=/home/node/.claude
+
+# GitHub Personal Access Token for gh CLI
+# GH_TOKEN=ghp_your_token_here
+
+# Git identity (used for commits inside the container)
+# GIT_USER_NAME=Your Name
+# GIT_USER_EMAIL=your.email@example.com
+
+# Timezone (defaults to Europe/Helsinki if not set)
+# TZ=America/New_York
+
+# Skip firewall initialization (set to 1 to disable)
+SKIP_FIREWALL=1
+
+# Playwright browsers path (pre-installed in image)
+PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+
+# Skip Playwright browser downloads (browsers are pre-installed)
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# Notification URL (e.g., ntfy.sh) - called when Claude is idle or needs permission
+# Supports any URL that accepts POST requests (ntfy.sh, webhooks, etc.)
+# NOTIFICATION_URL=https://ntfy.sh/your-topic-here
+
+# Vaadin Pro/Commercial key (for Charts, Board, Acceleration Kits, etc.)
+# Alternatively, mount a ~/.vaadin/proKey file into the container
+# VAADIN_PRO_KEY=your-pro-key-here
+
+# Node.js memory limit
+NODE_OPTIONS=--max-old-space-size=4096
+```
+
+If you had the folder open in VS Code, it should have already prompted you that a devcotnainer config was found. If not open the command palette and with > at the front look for "Dev Containers: Rebuild and Reopend in Container". It will download the internet and reopen the folder inside the devcotnaienr in VS Code. 
+
+Read what the `entrypoint.sh` command tells you about versions if wou want to use built-in predownloaded browers, playwright MCP in headless mode etc. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
+
+## Separate devcontainer and workspaces
+
+```
+mkdir workspace
+```
+
+Then clone your project(s) under `workspace`
+
+After starting the devconatiner in VS Code use the command palette (top center) and with > at the beginning look for "File: Open Folder" and then navigate to `/workspace/workspace/your-project`. Now your devcontainer config and project are separate, but all still runs inside the devcontainer. To get back to your devcontainer config do the same open but select `/workspace` instead. 
+ 
+To keep your devcontainer and workspace permananently separate change the `workspaceMount` entry, use: `-v "${localWorkspaceFolder}/workspace/:/workspace" ` for the bind mount instead. 
+
+# The not TL;DR version
+
+Below is a more compehensive example with instructions etc... Reading through them can give you insight into the whats and the whys... 
+
 # Claude Container
 
 A Docker devcontainer for running Claude Code in a sandboxed environment with:
