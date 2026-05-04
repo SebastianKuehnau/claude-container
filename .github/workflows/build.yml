@@ -27,8 +27,9 @@ jobs:
         include:
           - variant: base
             image_suffix: ""
-          - variant: dind
-            image_suffix: "-dind"
+          # dind variant temporarily disabled — re-enable by uncommenting.
+          # - variant: dind
+          #   image_suffix: "-dind"
           - variant: opencode
             image_suffix: "-opencode"
 
