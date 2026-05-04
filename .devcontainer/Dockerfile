@@ -2,7 +2,7 @@
 # Based on the official reference implementation with Java 21 support
 # Multi-stage build supporting base (Claude Code), opencode, and Docker-in-Docker variants
 
-ARG NODE_VERSION=20
+ARG NODE_VERSION=22
 ARG VARIANT=base
 
 # ========================================
@@ -10,7 +10,7 @@ ARG VARIANT=base
 # Agent-agnostic: tools, Java, Playwright, browsers.
 # Agent CLIs (Claude Code, OpenCode) are added in downstream stages.
 # ========================================
-FROM node:${NODE_VERSION}-bookworm AS base-common
+FROM node:${NODE_VERSION}-trixie AS base-common
 
 ARG TZ=Europe/Helsinki
 
@@ -196,7 +196,7 @@ USER root
 # Install OpenCode via the official bash installer.
 # Runs as `node` so the binary lands in /home/node/.opencode/bin/opencode,
 # then symlinked into /usr/local/bin for system-wide PATH availability.
-# Tar is already provided by the node:bookworm base image.
+# Tar is already provided by the node:trixie base image.
 RUN if [ "${OPENCODE_VERSION}" = "latest" ]; then \
       su - node -c "curl -fsSL https://opencode.ai/install | bash"; \
     else \
@@ -237,7 +237,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://download.docker.com/linux/debian/gpg | \
        gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
     && chmod a+r /etc/apt/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" | \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
        tee /etc/apt/sources.list.d/docker.list > /dev/null \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
