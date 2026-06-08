@@ -129,7 +129,7 @@ then create a deccontainer file under `.devcontainer/devcontainer.json` with the
   },
 // If you need docker inside the dev container, does open up options for the AI to do all kinds of things... 
 //  "features": {
-//    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+//    "ghcr.io/devcontainers/features/docker-in-docker:3": {
 //      "version": "latest",
 //      "enableNonRootDocker": "true",
 //      "moby": "false"
