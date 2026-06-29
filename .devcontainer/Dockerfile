@@ -190,9 +190,8 @@ RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY playwright-info.sh /usr/local/bin/playwright-info
-COPY cdp-proxy-monitor.sh /usr/local/bin/cdp-proxy-monitor
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info /usr/local/bin/cdp-proxy-monitor
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
@@ -231,9 +230,8 @@ RUN if [ "${OPENCODE_VERSION}" = "latest" ]; then \
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint-opencode.sh /usr/local/bin/entrypoint.sh
 COPY playwright-info.sh /usr/local/bin/playwright-info
-COPY cdp-proxy-monitor.sh /usr/local/bin/cdp-proxy-monitor
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info /usr/local/bin/cdp-proxy-monitor
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
@@ -297,13 +295,11 @@ COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
 COPY playwright-info.sh /usr/local/bin/playwright-info
-COPY cdp-proxy-monitor.sh /usr/local/bin/cdp-proxy-monitor
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
 RUN chmod +x /usr/local/bin/init-firewall.sh \
              /usr/local/bin/entrypoint.sh \
              /usr/local/bin/entrypoint-dind.sh \
-             /usr/local/bin/playwright-info \
-             /usr/local/bin/cdp-proxy-monitor
+             /usr/local/bin/playwright-info
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
