@@ -23,6 +23,10 @@ jobs:
       packages: write
 
     strategy:
+      # Don't let one flaky variant cancel the others. Each variant is an
+      # independent image, so a transient failure in (e.g.) the opencode build
+      # shouldn't take down the otherwise-healthy base and dind builds.
+      fail-fast: false
       matrix:
         include:
           - variant: base
