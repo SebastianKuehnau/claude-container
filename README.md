@@ -724,13 +724,14 @@ The container includes Playwright with Chromium pre-installed, ready to use with
 
 ### Pre-installed Browsers
 
-The container includes **two versions** of Chromium to support different use cases:
+The container includes **multiple versions** of Chromium to support different use cases:
 
 - **Standard Playwright Chromium** (e.g., `chromium-1208`) - For Java Playwright and direct Node.js Playwright usage
 - **MCP Playwright Chromium** (e.g., `chromium-1209`) - For Claude's browser automation tools (`@playwright/mcp`)
+- **Agent CLI Chromium** (e.g., `chromium-1210`) - For the Playwright Agent CLI (`@playwright/cli`)
 - **FFmpeg** (for video recording)
 
-This dual installation ensures that Claude's MCP browser tools work without downloading browsers at runtime.
+Pre-installing each ensures the browser automation tooling works without downloading browsers at runtime.
 
 Browsers are installed at `/opt/playwright-browsers` and owned by the `node` user (writable for lock files).
 
@@ -767,6 +768,26 @@ playwright-info
 
 Using `@latest` instead of a pinned version will download new browsers at runtime, which may be slow or fail if the firewall blocks downloads.
 
+### Playwright Agent CLI (`@playwright/cli`)
+
+The container also ships the [Playwright Agent CLI](https://playwright.dev/agent-cli/introduction), a lower-token, less-flaky alternative to the MCP server. Instead of the agent calling MCP tools (whose schemas and page snapshots live in the context window), the agent drives the browser with plain `playwright-cli` shell commands and concise output — skills are loaded on demand.
+
+It runs **alongside** the MCP server; use whichever you prefer.
+
+**Pre-installed skill (no setup needed).** The agent-facing skill is baked into the image at `~/.claude/skills/playwright-cli`. Claude Code loads personal skills from `~/.claude/skills`, and OpenCode also discovers skills there, so both agents pick it up automatically in any project — without touching your mounted workspace.
+
+**Quick use:**
+```bash
+playwright-cli open                         # launch the browser (headless by default)
+playwright-cli goto https://example.com     # navigate
+playwright-cli snapshot                      # accessibility snapshot with element refs
+playwright-cli click e15                     # interact using a ref from the snapshot
+playwright-cli close
+playwright-cli --help                        # full command list
+```
+
+To instead install the skill into a specific project (committed to the repo), run `playwright-cli install --skills claude` (or `--skills agents` for the agent-agnostic `.agents/skills` location).
+
 ### Java Playwright
 
 The container is configured to work with Java Playwright out of the box:
@@ -794,6 +815,10 @@ Standard Playwright: 1.58.1
 MCP Package:         @playwright/mcp@0.0.64
   Playwright:        1.59.0-alpha
   Chromium:          chromium-1209
+
+Agent CLI:           @playwright/cli@0.1.14
+  Chromium:          chromium-1210
+  Skill:             ~/.claude/skills/playwright-cli
 ```
 
 Use this version in your Maven `pom.xml`:

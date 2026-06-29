@@ -23,6 +23,16 @@ if [ -f "$VERSION_FILE" ]; then
         echo "  Playwright:        ${MCP_PW_VER}"
         echo "  Chromium:          ${MCP_CHROMIUM_BUILD:-unknown}"
     fi
+
+    # Playwright Agent CLI
+    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" "$VERSION_FILE" | cut -d= -f2)
+    CLI_CHROMIUM_BUILD=$(grep "^CLI_CHROMIUM_BUILD=" "$VERSION_FILE" | cut -d= -f2)
+    if [ -n "$CLI_PKG_VER" ]; then
+        echo ""
+        echo "Agent CLI:           @playwright/cli@${CLI_PKG_VER}"
+        echo "  Chromium:          ${CLI_CHROMIUM_BUILD:-unknown}"
+        echo "  Skill:             ~/.claude/skills/playwright-cli"
+    fi
     echo ""
 fi
 
@@ -44,6 +54,8 @@ echo ""
 echo "=== Usage Notes ==="
 echo "- Standard Playwright: For Java Playwright and direct Node.js usage"
 echo "- MCP Playwright: For Claude's browser automation tools (@playwright/mcp)"
+echo "- Agent CLI (@playwright/cli): Lower-token browser automation via shell commands"
+echo "    Pre-installed skill: ~/.claude/skills/playwright-cli (run 'playwright-cli --help')"
 
 # Show recommended .mcp.json if MCP is installed
 if [ -f "$VERSION_FILE" ]; then

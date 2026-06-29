@@ -22,9 +22,14 @@ if [[ -f /opt/playwright-browsers/VERSION ]]; then
     MCP_PKG_VER=$(grep "^MCP_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
     MCP_PW_VER=$(grep "^MCP_PLAYWRIGHT_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
     MCP_CHROMIUM_BUILD=$(grep "^MCP_CHROMIUM_BUILD=" /opt/playwright-browsers/VERSION | cut -d= -f2)
+    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
+    CLI_CHROMIUM_BUILD=$(grep "^CLI_CHROMIUM_BUILD=" /opt/playwright-browsers/VERSION | cut -d= -f2)
     echo "  Playwright:   ${PW_VER} (${CHROMIUM_BUILD})"
     if [[ -n "${MCP_PW_VER}" ]]; then
         echo "  MCP:          @playwright/mcp@${MCP_PKG_VER} (${MCP_CHROMIUM_BUILD})"
+    fi
+    if [[ -n "${CLI_PKG_VER}" ]]; then
+        echo "  Agent CLI:    @playwright/cli@${CLI_PKG_VER} (${CLI_CHROMIUM_BUILD})"
     fi
     echo "  Browsers:     ${PLAYWRIGHT_BROWSERS_PATH:-/opt/playwright-browsers}"
 fi
@@ -48,6 +53,13 @@ if [[ -f /opt/playwright-browsers/VERSION ]]; then
         echo '    "type": "local",'
         echo '    "command": ["npx", "@playwright/mcp@'"${MCP_PKG_VER}"'", "--headless", "--browser", "chromium"]'
         echo '  }'
+    fi
+    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
+    if [[ -n "${CLI_PKG_VER}" ]]; then
+        echo ""
+        echo "Playwright Agent CLI (lower-token alternative to the MCP):"
+        echo "  Skill pre-installed at ~/.claude/skills/playwright-cli — OpenCode discovers it automatically."
+        echo "  Drive a browser directly, e.g.: playwright-cli open && playwright-cli goto https://example.com"
     fi
 fi
 echo ""
