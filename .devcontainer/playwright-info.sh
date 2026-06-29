@@ -23,6 +23,16 @@ if [ -f "$VERSION_FILE" ]; then
         echo "  Playwright:        ${MCP_PW_VER}"
         echo "  Chromium:          ${MCP_CHROMIUM_BUILD:-unknown}"
     fi
+
+    # Playwright Agent CLI
+    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" "$VERSION_FILE" | cut -d= -f2)
+    CLI_CHROMIUM_BUILD=$(grep "^CLI_CHROMIUM_BUILD=" "$VERSION_FILE" | cut -d= -f2)
+    if [ -n "$CLI_PKG_VER" ]; then
+        echo ""
+        echo "Agent CLI:           @playwright/cli@${CLI_PKG_VER}"
+        echo "  Chromium:          ${CLI_CHROMIUM_BUILD:-unknown}"
+        echo "  Skill:             ~/.claude/skills/playwright-cli"
+    fi
     echo ""
 fi
 
@@ -43,14 +53,18 @@ fi
 echo ""
 echo "=== Usage Notes ==="
 echo "- Standard Playwright: For Java Playwright and direct Node.js usage"
-echo "- MCP Playwright: For Claude's browser automation tools (@playwright/mcp)"
+echo "- Agent CLI (@playwright/cli): RECOMMENDED for agent browser automation —"
+echo "    faster, lower token use. Pre-installed skill: ~/.claude/skills/playwright-cli"
+echo "    (run 'playwright-cli --help')"
+echo "- MCP Playwright (@playwright/mcp): DEPRECATED — prefer the Agent CLI;"
+echo "    kept for a grace period, will be removed from the container in a future release"
 
-# Show recommended .mcp.json if MCP is installed
+# Show the .mcp.json snippet if MCP is installed (deprecated — for existing setups)
 if [ -f "$VERSION_FILE" ]; then
     MCP_PKG_VER=$(grep "^MCP_PACKAGE_VERSION=" "$VERSION_FILE" | cut -d= -f2)
     if [ -n "$MCP_PKG_VER" ]; then
         echo ""
-        echo "=== Recommended .mcp.json ==="
+        echo "=== .mcp.json (DEPRECATED — prefer the Agent CLI) ==="
         echo "To use pre-installed browsers (no download at runtime):"
         echo ""
         echo '{'

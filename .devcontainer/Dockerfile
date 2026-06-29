@@ -110,6 +110,21 @@ RUN npm install -g @playwright/mcp \
          echo "Warning: Could not determine MCP Playwright version, skipping MCP browser install"; \
        fi
 
+# Install the Playwright Agent CLI (@playwright/cli) and its required browser.
+# This is a lower-token, less-flaky alternative to the MCP server: coding agents
+# drive the browser with `playwright-cli` shell commands instead of MCP tool
+# calls (no tool schemas / snapshots held in context). It bundles its own, newer
+# playwright-core, so it needs its own chromium build pre-installed here to avoid
+# a runtime download (which the firewall would block). The agent-facing skill is
+# installed further down, once the node user's home directory exists.
+RUN npm install -g @playwright/cli \
+    && CLI_PACKAGE_VERSION=$(npm list -g @playwright/cli --json 2>/dev/null | jq -r '.dependencies["@playwright/cli"].version // empty') \
+    && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers playwright-cli install-browser chromium --with-deps \
+    && echo "" >> /opt/playwright-browsers/VERSION \
+    && echo "# Playwright Agent CLI (for agent browser automation via shell commands):" >> /opt/playwright-browsers/VERSION \
+    && echo "CLI_PACKAGE_VERSION=${CLI_PACKAGE_VERSION}" >> /opt/playwright-browsers/VERSION \
+    && echo "CLI_CHROMIUM_BUILD=$(ls -dt /opt/playwright-browsers/chromium-* | head -1 | xargs basename)" >> /opt/playwright-browsers/VERSION
+
 # Make npm global directories and Playwright browsers writable by node user
 # This allows Claude to self-update and Java Playwright to create lock files
 RUN chown -R node:node /usr/local/lib/node_modules \
@@ -124,6 +139,14 @@ RUN echo "node ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/node \
 # Create directories for the node user
 RUN mkdir -p /home/node/.claude /home/node/.config/gh /commandhistory \
     && chown -R node:node /home/node /commandhistory
+
+# Install the Playwright Agent CLI skill into the node user's personal skills
+# directory. `playwright-cli install --skills claude` writes to ~/.claude/skills.
+# Claude Code reads ~/.claude/skills, and OpenCode also discovers skills there
+# (in addition to ~/.config/opencode/skills), so this single copy serves the
+# base, opencode and dind variants alike. Baking it into the image keeps it out
+# of the user's mounted workspace (no repo pollution) and available everywhere.
+RUN su - node -c "playwright-cli install --skills claude"
 
 # Install Oh My Zsh for the node user
 USER node
@@ -167,9 +190,8 @@ RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY playwright-info.sh /usr/local/bin/playwright-info
-COPY cdp-proxy-monitor.sh /usr/local/bin/cdp-proxy-monitor
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info /usr/local/bin/cdp-proxy-monitor
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
@@ -208,9 +230,8 @@ RUN if [ "${OPENCODE_VERSION}" = "latest" ]; then \
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint-opencode.sh /usr/local/bin/entrypoint.sh
 COPY playwright-info.sh /usr/local/bin/playwright-info
-COPY cdp-proxy-monitor.sh /usr/local/bin/cdp-proxy-monitor
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info /usr/local/bin/cdp-proxy-monitor
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
@@ -274,13 +295,11 @@ COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
 COPY playwright-info.sh /usr/local/bin/playwright-info
-COPY cdp-proxy-monitor.sh /usr/local/bin/cdp-proxy-monitor
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
 RUN chmod +x /usr/local/bin/init-firewall.sh \
              /usr/local/bin/entrypoint.sh \
              /usr/local/bin/entrypoint-dind.sh \
-             /usr/local/bin/playwright-info \
-             /usr/local/bin/cdp-proxy-monitor
+             /usr/local/bin/playwright-info
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace

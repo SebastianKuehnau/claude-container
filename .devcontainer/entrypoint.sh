@@ -22,9 +22,14 @@ if [[ -f /opt/playwright-browsers/VERSION ]]; then
     MCP_PKG_VER=$(grep "^MCP_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
     MCP_PW_VER=$(grep "^MCP_PLAYWRIGHT_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
     MCP_CHROMIUM_BUILD=$(grep "^MCP_CHROMIUM_BUILD=" /opt/playwright-browsers/VERSION | cut -d= -f2)
+    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
+    CLI_CHROMIUM_BUILD=$(grep "^CLI_CHROMIUM_BUILD=" /opt/playwright-browsers/VERSION | cut -d= -f2)
     echo "  Playwright:   ${PW_VER} (${CHROMIUM_BUILD})"
     if [[ -n "${MCP_PW_VER}" ]]; then
         echo "  MCP:          @playwright/mcp@${MCP_PKG_VER} (${MCP_CHROMIUM_BUILD})"
+    fi
+    if [[ -n "${CLI_PKG_VER}" ]]; then
+        echo "  Agent CLI:    @playwright/cli@${CLI_PKG_VER} (${CLI_CHROMIUM_BUILD})"
     fi
     echo "  Browsers:     ${PLAYWRIGHT_BROWSERS_PATH:-/opt/playwright-browsers}"
 fi
@@ -37,12 +42,21 @@ fi
 
 echo "========================================"
 
-# Show MCP configuration hint if MCP is installed
+# Show browser-automation hints. The Agent CLI is the recommended path; the
+# MCP server is deprecated and printed only as a fallback for existing setups.
 if [[ -f /opt/playwright-browsers/VERSION ]]; then
+    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
+    if [[ -n "${CLI_PKG_VER}" ]]; then
+        echo ""
+        echo "Playwright Agent CLI (recommended — faster, lower token use):"
+        echo "  Skill pre-installed at ~/.claude/skills/playwright-cli — Claude loads it on demand."
+        echo "  Drive a browser directly, e.g.: playwright-cli open && playwright-cli goto https://example.com"
+    fi
     MCP_PKG_VER=$(grep "^MCP_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
     if [[ -n "${MCP_PKG_VER}" ]]; then
         echo ""
-        echo "Playwright MCP .mcp.json (use pre-installed browsers):"
+        echo "Playwright MCP (DEPRECATED — prefer the Agent CLI above; will be removed in a future release)."
+        echo "  .mcp.json (use pre-installed browsers):"
         echo '  "playwright": {'
         echo '    "command": "npx",'
         echo '    "args": ['
@@ -137,11 +151,22 @@ elif command -v iptables &> /dev/null; then
     echo ""
 fi
 
-# Show Chrome DevTools remote debugging hint
-echo "Chrome DevTools (CDT) remote debugging:"
-echo "  Auto-proxy that tracks Playwright's random debug port to 0.0.0.0:9222:"
-echo "  nohup cdp-proxy-monitor > /tmp/cdp-proxy.log 2>&1 &"
-echo "  Then forward port 9222 to your machine and open chrome://inspect"
+# Show Chrome DevTools remote debugging hint.
+# Copy-paste instruction the user can hand to their coding agent (Claude/OpenCode)
+# so it launches a browser you can attach DevTools to from your host.
+echo "Chrome DevTools (CDP) remote debugging:"
+echo "  Copy the block below and give it to your agent ----------------------------"
+echo "  Launch the browser with CDP on a FIXED port. Two flags are mandatory:"
+echo "    --remote-debugging-port=9222   (Playwright defaults to --remote-debugging-pipe,"
+echo "                                    which exposes NO TCP port)"
+echo "    --remote-allow-origins=*       (Chrome 111+ returns HTTP 403 on the DevTools"
+echo "                                    WebSocket without it)"
+echo "  Loopback bind is enough — no socat / 0.0.0.0 bridge: the port-forward rewrites the host."
+echo "  - Playwright Agent CLI: put the flags in the config's browser.launchOptions.args, then"
+echo "      playwright-cli open --config=<file>"
+echo "  - Raw Playwright: chromium.launch({ args: ['--remote-debugging-port=9222','--remote-allow-origins=*'] })"
+echo "  ---------------------------------------------------------------------------"
+echo "  Then forward port 9222 to your machine and open chrome://inspect."
 echo ""
 
 # Execute the passed command (or default to zsh)
