@@ -92,31 +92,13 @@ RUN npm install -g playwright \
     && echo "#   <artifactId>playwright</artifactId>" >> /opt/playwright-browsers/VERSION \
     && echo "#   <version>${PLAYWRIGHT_VERSION}</version>" >> /opt/playwright-browsers/VERSION
 
-# Install Playwright MCP and its required browsers (newer version than standard Playwright)
-# This ensures Claude's MCP tools work without downloading browsers at runtime
-# The MCP typically requires a newer Playwright version with a different chromium build
-RUN npm install -g @playwright/mcp \
-    && MCP_PACKAGE_VERSION=$(npm list -g @playwright/mcp --json 2>/dev/null | jq -r '.dependencies["@playwright/mcp"].version // empty') \
-    && MCP_PW_VERSION=$(npm view @playwright/mcp dependencies.playwright 2>/dev/null || echo "") \
-    && if [ -n "$MCP_PW_VERSION" ]; then \
-         echo "Installing MCP Playwright browsers (version ${MCP_PW_VERSION})..." \
-         && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers npx playwright@${MCP_PW_VERSION} install --with-deps chromium \
-         && echo "" >> /opt/playwright-browsers/VERSION \
-         && echo "# MCP Playwright (for Claude's browser tools):" >> /opt/playwright-browsers/VERSION \
-         && echo "MCP_PACKAGE_VERSION=${MCP_PACKAGE_VERSION}" >> /opt/playwright-browsers/VERSION \
-         && echo "MCP_PLAYWRIGHT_VERSION=${MCP_PW_VERSION}" >> /opt/playwright-browsers/VERSION \
-         && echo "MCP_CHROMIUM_BUILD=$(ls -d /opt/playwright-browsers/chromium-* | tail -1 | xargs basename)" >> /opt/playwright-browsers/VERSION; \
-       else \
-         echo "Warning: Could not determine MCP Playwright version, skipping MCP browser install"; \
-       fi
-
 # Install the Playwright Agent CLI (@playwright/cli) and its required browser.
-# This is a lower-token, less-flaky alternative to the MCP server: coding agents
-# drive the browser with `playwright-cli` shell commands instead of MCP tool
-# calls (no tool schemas / snapshots held in context). It bundles its own, newer
-# playwright-core, so it needs its own chromium build pre-installed here to avoid
-# a runtime download (which the firewall would block). The agent-facing skill is
-# installed further down, once the node user's home directory exists.
+# Coding agents drive the browser with `playwright-cli` shell commands and concise
+# output (no tool schemas / page snapshots held in context), which is fast and
+# token-efficient. It bundles its own, newer playwright-core, so it needs its own
+# chromium build pre-installed here to avoid a runtime download (which the firewall
+# would block). The agent-facing skill is installed further down, once the node
+# user's home directory exists.
 RUN npm install -g @playwright/cli \
     && CLI_PACKAGE_VERSION=$(npm list -g @playwright/cli --json 2>/dev/null | jq -r '.dependencies["@playwright/cli"].version // empty') \
     && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers playwright-cli install-browser chromium --with-deps \

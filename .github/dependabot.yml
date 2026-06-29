@@ -24,7 +24,7 @@ updates:
       - dependencies
       - github-actions
 
-  # Note: npm packages installed inside the container (playwright, @playwright/mcp,
+  # Note: npm packages installed inside the container (playwright, @playwright/cli,
   # opencode-ai, claude install script) are intentionally NOT tracked here. They are
   # pulled fresh on every image build, and the workflow runs weekly on cron, so the
   # next image rebuild always uses the latest versions without dependabot churn.
