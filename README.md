@@ -832,56 +832,45 @@ Use this version in your Maven `pom.xml`:
 
 ### Remote Debugging (CDP)
 
-The container includes `cdp-proxy-monitor`, a background script that lets you connect Chrome DevTools to Playwright browsers running inside the container.
+You can attach your local Chrome DevTools to a browser that the agent drives inside the container.
 
-#### The Problem
+#### The two gotchas
 
-Playwright MCP launches Chrome with a random `--remote-debugging-port` each time. The container exposes port 9222 for external Chrome DevTools connections, but there's no way to force Playwright MCP to use a fixed port.
+To expose a working CDP endpoint, the browser must launch with **both** of these flags:
 
-#### How It Works
+| Flag | Why |
+|------|-----|
+| `--remote-debugging-port=9222` | Playwright launches Chromium with `--remote-debugging-pipe` by default, which exposes **no TCP port**. You must force a fixed port. |
+| `--remote-allow-origins=*` | Chrome 111+ returns **HTTP 403** on the DevTools WebSocket if the request origin isn't allow-listed. |
 
-`cdp-proxy-monitor` runs in the background and:
-1. Polls every second for a running Chrome process with `--remote-debugging-port`
-2. Extracts the actual port Chrome is listening on
-3. Sets up a socat proxy: `0.0.0.0:9222 -> 127.0.0.1:<chrome-port>`
-4. Detects when Chrome dies and waits for a new instance
-5. Auto-reconnects when Chrome restarts on a different port
+**Binding to loopback is sufficient** — no `socat` or `0.0.0.0` bridge is needed. A forwarder that connects from inside the container's network namespace (VS Code Dev Containers port forwarding, `ssh -L`) reaches `127.0.0.1:9222` directly, and Chrome rewrites the debugger URL host to match the forwarded request.
 
-| Event | Monitor action |
-|-------|---------------|
-| Chrome not running | Idles, checks every 1s |
-| Chrome starts (port N) | Starts proxy: `9222 -> N`, verifies |
-| Chrome still on port N | No action |
-| Chrome dies | Kills proxy, waits |
-| Chrome restarts (port M) | Re-proxies: `9222 -> M`, verifies |
+> If you instead publish the port with plain `docker run -p 9222:9222`, also add `--remote-debugging-address=0.0.0.0` so Chrome binds beyond loopback.
 
-#### Quick Start
+#### How to launch with CDP enabled
 
-1. **Start the container with port 9222 exposed:**
-   ```bash
-   docker run -it --rm \
-     --cap-add=NET_ADMIN \
-     --cap-add=NET_RAW \
-     -e SKIP_FIREWALL=1 \
-     -p 9222:9222 \
-     claude-container:base
-   ```
+Hand this to your agent — it just needs to add the two flags wherever it launches the browser:
 
-2. **Inside the container, start the CDP proxy monitor:**
-   ```bash
-   nohup cdp-proxy-monitor > /tmp/cdp-proxy.log 2>&1 &
-   ```
+- **Playwright Agent CLI** — put the flags in the config's `browser.launchOptions.args`:
+  ```json
+  { "browser": { "launchOptions": { "args": ["--remote-debugging-port=9222", "--remote-allow-origins=*"] } } }
+  ```
+  ```bash
+  playwright-cli open --config=cdp.config.json
+  ```
 
-3. **Connect from Chrome:**
-   - Forward port 9222 if the container is on a remote host: `ssh -L 9222:localhost:9222 user@docker-host`
-   - Open `chrome://inspect` in your local Chrome
-   - Click "Configure..." and add `localhost:9222`
-   - Playwright-controlled browsers will appear as remote targets
+- **Raw Playwright (Node/Java)** — pass them to the launch args:
+  ```js
+  await chromium.launch({ args: ['--remote-debugging-port=9222', '--remote-allow-origins=*'] });
+  ```
 
-**Check the proxy log:**
-```bash
-tail -f /tmp/cdp-proxy.log
-```
+#### Connect from your local Chrome
+
+1. Forward port 9222 to your machine. In VS Code Dev Containers this is automatic; otherwise tunnel from inside the container's namespace, e.g. `ssh -L 9222:localhost:9222 user@docker-host`.
+2. Open `chrome://inspect`, click **Configure…**, and add `localhost:9222`.
+3. The agent-controlled browser appears as a remote target.
+
+> **Note:** Earlier images relied on the deprecated Playwright MCP plus a `cdp-proxy-monitor` socat bridge. The MCP is [deprecated](#playwright-mcp-deprecated) and the proxy is no longer needed with the fixed-port approach above.
 
 #### Security Note
 

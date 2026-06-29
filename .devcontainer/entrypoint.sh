@@ -151,11 +151,22 @@ elif command -v iptables &> /dev/null; then
     echo ""
 fi
 
-# Show Chrome DevTools remote debugging hint
-echo "Chrome DevTools (CDT) remote debugging:"
-echo "  Auto-proxy that tracks Playwright's random debug port to 0.0.0.0:9222:"
-echo "  nohup cdp-proxy-monitor > /tmp/cdp-proxy.log 2>&1 &"
-echo "  Then forward port 9222 to your machine and open chrome://inspect"
+# Show Chrome DevTools remote debugging hint.
+# Copy-paste instruction the user can hand to their coding agent (Claude/OpenCode)
+# so it launches a browser you can attach DevTools to from your host.
+echo "Chrome DevTools (CDP) remote debugging:"
+echo "  Copy the block below and give it to your agent ----------------------------"
+echo "  Launch the browser with CDP on a FIXED port. Two flags are mandatory:"
+echo "    --remote-debugging-port=9222   (Playwright defaults to --remote-debugging-pipe,"
+echo "                                    which exposes NO TCP port)"
+echo "    --remote-allow-origins=*       (Chrome 111+ returns HTTP 403 on the DevTools"
+echo "                                    WebSocket without it)"
+echo "  Loopback bind is enough — no socat / 0.0.0.0 bridge: the port-forward rewrites the host."
+echo "  - Playwright Agent CLI: put the flags in the config's browser.launchOptions.args, then"
+echo "      playwright-cli open --config=<file>"
+echo "  - Raw Playwright: chromium.launch({ args: ['--remote-debugging-port=9222','--remote-allow-origins=*'] })"
+echo "  ---------------------------------------------------------------------------"
+echo "  Then forward port 9222 to your machine and open chrome://inspect."
 echo ""
 
 # Execute the passed command (or default to zsh)
