@@ -42,12 +42,21 @@ fi
 
 echo "========================================"
 
-# Show MCP configuration hint if MCP is installed
+# Show browser-automation hints. The Agent CLI is the recommended path; the
+# MCP server is deprecated and printed only as a fallback for existing setups.
 if [[ -f /opt/playwright-browsers/VERSION ]]; then
+    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
+    if [[ -n "${CLI_PKG_VER}" ]]; then
+        echo ""
+        echo "Playwright Agent CLI (recommended — faster, lower token use):"
+        echo "  Skill pre-installed at ~/.claude/skills/playwright-cli — Claude loads it on demand."
+        echo "  Drive a browser directly, e.g.: playwright-cli open && playwright-cli goto https://example.com"
+    fi
     MCP_PKG_VER=$(grep "^MCP_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
     if [[ -n "${MCP_PKG_VER}" ]]; then
         echo ""
-        echo "Playwright MCP .mcp.json (use pre-installed browsers):"
+        echo "Playwright MCP (DEPRECATED — prefer the Agent CLI above; will be removed in a future release)."
+        echo "  .mcp.json (use pre-installed browsers):"
         echo '  "playwright": {'
         echo '    "command": "npx",'
         echo '    "args": ['
@@ -57,13 +66,6 @@ if [[ -f /opt/playwright-browsers/VERSION ]]; then
         echo '      "chromium"'
         echo '    ]'
         echo '  }'
-    fi
-    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
-    if [[ -n "${CLI_PKG_VER}" ]]; then
-        echo ""
-        echo "Playwright Agent CLI (lower-token alternative to the MCP):"
-        echo "  Skill pre-installed at ~/.claude/skills/playwright-cli — Claude loads it on demand."
-        echo "  Drive a browser directly, e.g.: playwright-cli open && playwright-cli goto https://example.com"
     fi
 fi
 echo ""

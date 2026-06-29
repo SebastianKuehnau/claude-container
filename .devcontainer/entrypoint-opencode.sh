@@ -42,24 +42,26 @@ fi
 
 echo "========================================"
 
-# Show MCP configuration hint if MCP is installed
-# OpenCode supports MCP servers via its config file (opencode.json / ~/.config/opencode/config.json)
+# Show browser-automation hints. The Agent CLI is the recommended path; the
+# MCP server is deprecated and printed only as a fallback for existing setups.
+# (OpenCode supports MCP servers via opencode.json / ~/.config/opencode/config.json.)
 if [[ -f /opt/playwright-browsers/VERSION ]]; then
+    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
+    if [[ -n "${CLI_PKG_VER}" ]]; then
+        echo ""
+        echo "Playwright Agent CLI (recommended — faster, lower token use):"
+        echo "  Skill pre-installed at ~/.claude/skills/playwright-cli — OpenCode discovers it automatically."
+        echo "  Drive a browser directly, e.g.: playwright-cli open && playwright-cli goto https://example.com"
+    fi
     MCP_PKG_VER=$(grep "^MCP_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
     if [[ -n "${MCP_PKG_VER}" ]]; then
         echo ""
-        echo "Playwright MCP for OpenCode (add to opencode.json mcp section):"
+        echo "Playwright MCP (DEPRECATED — prefer the Agent CLI above; will be removed in a future release)."
+        echo "  Add to opencode.json mcp section:"
         echo '  "playwright": {'
         echo '    "type": "local",'
         echo '    "command": ["npx", "@playwright/mcp@'"${MCP_PKG_VER}"'", "--headless", "--browser", "chromium"]'
         echo '  }'
-    fi
-    CLI_PKG_VER=$(grep "^CLI_PACKAGE_VERSION=" /opt/playwright-browsers/VERSION | cut -d= -f2)
-    if [[ -n "${CLI_PKG_VER}" ]]; then
-        echo ""
-        echo "Playwright Agent CLI (lower-token alternative to the MCP):"
-        echo "  Skill pre-installed at ~/.claude/skills/playwright-cli — OpenCode discovers it automatically."
-        echo "  Drive a browser directly, e.g.: playwright-cli open && playwright-cli goto https://example.com"
     fi
 fi
 echo ""

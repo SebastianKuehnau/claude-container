@@ -727,15 +727,35 @@ The container includes Playwright with Chromium pre-installed, ready to use with
 The container includes **multiple versions** of Chromium to support different use cases:
 
 - **Standard Playwright Chromium** (e.g., `chromium-1208`) - For Java Playwright and direct Node.js Playwright usage
-- **MCP Playwright Chromium** (e.g., `chromium-1209`) - For Claude's browser automation tools (`@playwright/mcp`)
-- **Agent CLI Chromium** (e.g., `chromium-1210`) - For the Playwright Agent CLI (`@playwright/cli`)
+- **Agent CLI Chromium** (e.g., `chromium-1210`) - For the Playwright Agent CLI (`@playwright/cli`, recommended for agents)
+- **MCP Playwright Chromium** (e.g., `chromium-1209`) - For Claude's browser automation tools (`@playwright/mcp`, deprecated)
 - **FFmpeg** (for video recording)
 
 Pre-installing each ensures the browser automation tooling works without downloading browsers at runtime.
 
 Browsers are installed at `/opt/playwright-browsers` and owned by the `node` user (writable for lock files).
 
-### MCP Configuration (.mcp.json)
+### Browser Automation for Agents — Playwright Agent CLI (recommended)
+
+The recommended way for an agent to drive a browser is the [Playwright Agent CLI](https://playwright.dev/agent-cli/introduction) (`@playwright/cli`). The agent runs plain `playwright-cli` shell commands with concise output and loads skills on demand, instead of calling MCP tools whose schemas and page snapshots sit in the context window. In practice it is **faster and uses fewer tokens** than the MCP server.
+
+**Pre-installed skill (no setup needed).** The agent-facing skill is baked into the image at `~/.claude/skills/playwright-cli`. Claude Code loads personal skills from `~/.claude/skills`, and OpenCode also discovers skills there, so both agents pick it up automatically in any project — without touching your mounted workspace.
+
+**Quick use:**
+```bash
+playwright-cli open                         # launch the browser (headless by default)
+playwright-cli goto https://example.com     # navigate
+playwright-cli snapshot                      # accessibility snapshot with element refs
+playwright-cli click e15                     # interact using a ref from the snapshot
+playwright-cli close
+playwright-cli --help                        # full command list
+```
+
+To instead install the skill into a specific project (committed to the repo), run `playwright-cli install --skills claude` (or `--skills agents` for the agent-agnostic `.agents/skills` location).
+
+### Playwright MCP (deprecated)
+
+> **Deprecated.** The `@playwright/mcp` server is still installed and works, but the [Playwright Agent CLI](#browser-automation-for-agents--playwright-agent-cli-recommended) above is now the recommended approach. The MCP is kept for a short grace period and will be **removed from the container** in a future release — see [#27](https://github.com/petrixh/claude-container/issues/27). New setups should use the Agent CLI.
 
 To use the pre-installed MCP browsers (avoiding downloads at runtime), pin the `@playwright/mcp` version in your `.mcp.json`:
 
@@ -767,26 +787,6 @@ playwright-info
 ```
 
 Using `@latest` instead of a pinned version will download new browsers at runtime, which may be slow or fail if the firewall blocks downloads.
-
-### Playwright Agent CLI (`@playwright/cli`)
-
-The container also ships the [Playwright Agent CLI](https://playwright.dev/agent-cli/introduction), a lower-token, less-flaky alternative to the MCP server. Instead of the agent calling MCP tools (whose schemas and page snapshots live in the context window), the agent drives the browser with plain `playwright-cli` shell commands and concise output — skills are loaded on demand.
-
-It runs **alongside** the MCP server; use whichever you prefer.
-
-**Pre-installed skill (no setup needed).** The agent-facing skill is baked into the image at `~/.claude/skills/playwright-cli`. Claude Code loads personal skills from `~/.claude/skills`, and OpenCode also discovers skills there, so both agents pick it up automatically in any project — without touching your mounted workspace.
-
-**Quick use:**
-```bash
-playwright-cli open                         # launch the browser (headless by default)
-playwright-cli goto https://example.com     # navigate
-playwright-cli snapshot                      # accessibility snapshot with element refs
-playwright-cli click e15                     # interact using a ref from the snapshot
-playwright-cli close
-playwright-cli --help                        # full command list
-```
-
-To instead install the skill into a specific project (committed to the repo), run `playwright-cli install --skills claude` (or `--skills agents` for the agent-agnostic `.agents/skills` location).
 
 ### Java Playwright
 
