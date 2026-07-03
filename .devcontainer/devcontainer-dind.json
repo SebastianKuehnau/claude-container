@@ -9,6 +9,7 @@
     },
     "target": "dind"
   },
+  "initializeCommand": "mkdir -p \"${localEnv:HOME}/.claude-container/claude\" && touch \"${localEnv:HOME}/.claude-container/claude.json\"",
   "runArgs": [
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW",
@@ -37,7 +38,8 @@
   "remoteUser": "node",
   "mounts": [
     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
-    "source=${localEnv:HOME}/.claude,target=/home/node/.claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.claude-container/claude,target=/home/node/.claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.claude-container/claude.json,target=/home/node/.claude.json,type=bind,consistency=cached",
     "source=claude-docker-data-${devcontainerId},target=/var/lib/docker,type=volume"
   ],
   "forwardPorts": [9222],
@@ -59,5 +61,6 @@
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
+  "postCreateCommand": "sudo chown -R node:node /home/node/.claude /home/node/.claude.json",
   "postStartCommand": "sudo /usr/local/bin/init-firewall.sh"
 }
