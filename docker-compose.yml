@@ -17,7 +17,8 @@ services:
       - NET_ADMIN
       - NET_RAW
     volumes:
-      - ${HOME}/.claude:/home/node/.claude:cached
+      - ${HOME}/.claude-container/claude:/home/node/.claude:cached
+      - ${HOME}/.claude-container/claude.json:/home/node/.claude.json
       - ./:/workspace:delegated
       - claude-bashhistory:/commandhistory
     environment:
@@ -58,7 +59,8 @@ services:
     security_opt:
       - seccomp:unconfined
     volumes:
-      - ${HOME}/.claude:/home/node/.claude:cached
+      - ${HOME}/.claude-container/claude:/home/node/.claude:cached
+      - ${HOME}/.claude-container/claude.json:/home/node/.claude.json
       - ./:/workspace:delegated
       - claude-bashhistory:/commandhistory
       - claude-docker-data:/var/lib/docker
@@ -97,7 +99,8 @@ services:
       - NET_ADMIN
       - NET_RAW
     volumes:
-      - ${HOME}/.claude:/home/node/.claude:cached
+      - ${HOME}/.claude-container/claude:/home/node/.claude:cached
+      - ${HOME}/.claude-container/claude.json:/home/node/.claude.json
       - ./:/workspace:delegated
       - claude-bashhistory:/commandhistory
       - /var/run/docker.sock:/var/run/docker.sock
