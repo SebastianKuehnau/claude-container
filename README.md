@@ -241,6 +241,62 @@ Before running the container, ensure:
    export GH_TOKEN=ghp_your_token_here
    ```
 
+## Authentication / Persistent Login
+
+This container uses a **dedicated host directory** for Claude Code authentication state, ensuring login persists across container recreations without interfering with your host Claude Code installation.
+
+### How It Works
+
+Claude Code stores authentication in two locations inside the Linux container:
+- `~/.claude/.credentials.json` — OAuth token
+- `~/.claude.json` — Account state, onboarding preferences (note: this is a **file** in the home directory, not inside `.claude/`)
+
+Both are mounted from `~/.claude-container/` on your host:
+- `~/.claude-container/claude/` → container `/home/node/.claude/`
+- `~/.claude-container/claude.json` → container `/home/node/.claude.json`
+
+The `initializeCommand` in `devcontainer.json` (or the equivalent setup in `docker-compose.yml`) automatically creates these directories and files **before** the container starts, avoiding Docker's bind-mount trap where missing files get created as directories.
+
+### First-Time Login
+
+When you start a container for the **first time**, Claude Code will prompt you to log in:
+
+```bash
+# Inside the container
+claude login
+```
+
+Follow the authentication flow. Your credentials will be saved to `~/.claude-container/` on the host.
+
+### Subsequent Starts
+
+After the initial login, **all future container starts** (including new worktrees, different projects, or container rebuilds) will automatically use the saved credentials. No re-login or onboarding required.
+
+### Security Notes
+
+⚠️ **Important:**
+- `~/.claude-container/` contains your authentication credentials
+- **Do not commit** this directory to version control
+- **Do not share** these files (they're tied to your account)
+- If you delete `~/.claude-container/`, you'll need to log in again
+- This directory is separate from your host `~/.claude/` (if you have Claude Code installed locally) to avoid conflicts
+
+### Verifying Setup
+
+After your first login, verify the files exist on your host:
+
+```bash
+# On your macOS/Linux host
+ls -la ~/.claude-container/
+# Should show:
+#   claude/                      (directory)
+#   claude.json                  (file, not directory!)
+
+ls -la ~/.claude-container/claude/
+# Should show:
+#   .credentials.json            (file with your OAuth token)
+```
+
 ## Container Variants
 
 This repository provides three container variants:
@@ -332,13 +388,14 @@ docker compose up -d claude-docker-host && docker compose exec claude-docker-hos
 docker run -it --rm \
   --cap-add=NET_ADMIN \
   --cap-add=NET_RAW \
-  -v "/path/to/claude-container-config:/home/node/.claude" \
+  -v "${HOME}/.claude-container/claude:/home/node/.claude" \
+  -v "${HOME}/.claude-container/claude.json:/home/node/.claude.json" \
   -e CLAUDE_CONFIG_DIR="/home/node/.claude" \
   -w /workspace \
   claude-container:base
 ```
 
-> **Note:** The `CLAUDE_CONFIG_DIR` environment variable tells Claude where to store authentication credentials. Mount a host directory to persist login across container restarts.
+> **Note:** The `CLAUDE_CONFIG_DIR` environment variable tells Claude where to store authentication credentials. Mount `~/.claude-container/` from the host to persist login across container restarts (see [Authentication](#authentication--persistent-login) section).
 
 ### Option 2b: Docker Run with Environment File
 
@@ -389,7 +446,8 @@ docker run -it --rm \
   --cap-add=NET_ADMIN \
   --cap-add=NET_RAW \
   --env-file .env \
-  -v "${HOME}/.claude:/home/node/.claude" \
+  -v "${HOME}/.claude-container/claude:/home/node/.claude" \
+  -v "${HOME}/.claude-container/claude.json:/home/node/.claude.json" \
   -v "${HOME}/.m2-cache:/home/node/.m2" \
   -v "${HOME}/.npm-cache:/home/node/.npm" \
   -v "${HOME}/.config/gh:/home/node/.config/gh" \
@@ -402,7 +460,8 @@ docker run -it --rm \
 
 | Host Path | Container Path | Purpose |
 |-----------|----------------|---------|
-| `~/.claude` | `/home/node/.claude` | Claude authentication and config |
+| `~/.claude-container/claude/` | `/home/node/.claude` | Claude config directory (credentials) |
+| `~/.claude-container/claude.json` | `/home/node/.claude.json` | Claude account state file |
 | `~/.m2-cache` | `/home/node/.m2` | Maven local repository cache |
 | `~/.npm-cache` | `/home/node/.npm` | NPM cache |
 | `~/.config/gh` | `/home/node/.config/gh` | GitHub CLI authentication |
