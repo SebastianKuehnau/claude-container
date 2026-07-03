@@ -8,6 +8,8 @@ services:
         TZ: ${TZ:-Europe/Helsinki}
         CLAUDE_CODE_VERSION: latest
         VARIANT: base
+        JAVA_VERSION: ${JAVA_VERSION:-25}
+        JAVA_VENDOR: ${JAVA_VENDOR:-temurin}
       target: base
     container_name: claude-container
     hostname: claude-dev
@@ -43,6 +45,8 @@ services:
         TZ: ${TZ:-Europe/Helsinki}
         CLAUDE_CODE_VERSION: latest
         VARIANT: dind
+        JAVA_VERSION: ${JAVA_VERSION:-25}
+        JAVA_VENDOR: ${JAVA_VENDOR:-temurin}
       target: dind
     container_name: claude-container-dind
     hostname: claude-dev-dind
@@ -84,6 +88,8 @@ services:
         TZ: ${TZ:-Europe/Helsinki}
         CLAUDE_CODE_VERSION: latest
         VARIANT: dind
+        JAVA_VERSION: ${JAVA_VERSION:-25}
+        JAVA_VENDOR: ${JAVA_VENDOR:-temurin}
       target: dind
     container_name: claude-container-docker-host
     hostname: claude-dev-docker
@@ -121,6 +127,8 @@ services:
         TZ: ${TZ:-Europe/Helsinki}
         OPENCODE_VERSION: latest
         VARIANT: opencode
+        JAVA_VERSION: ${JAVA_VERSION:-25}
+        JAVA_VENDOR: ${JAVA_VENDOR:-temurin}
       target: opencode
     container_name: opencode-container
     hostname: opencode-dev

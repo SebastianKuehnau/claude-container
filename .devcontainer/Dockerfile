@@ -59,18 +59,43 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Java 21 (Eclipse Temurin/Adoptium)
-RUN mkdir -p /etc/apt/keyrings \
-    && wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/adoptium.list \
-    && apt-get update \
-    && apt-get install -y temurin-25-jdk \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Install Java (vendor and version configurable via build args)
+# Supported vendors: temurin (default), corretto, zulu
+ARG JAVA_VERSION=25
+ARG JAVA_VENDOR=temurin
+RUN set -eux; \
+    mkdir -p /etc/apt/keyrings; \
+    case "${JAVA_VENDOR}" in \
+      temurin) \
+        wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
+          | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg; \
+        echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(lsb_release -cs) main" \
+          > /etc/apt/sources.list.d/adoptium.list; \
+        apt-get update && apt-get install -y temurin-${JAVA_VERSION}-jdk; \
+        JDK_DIR=$(ls -d /usr/lib/jvm/temurin-${JAVA_VERSION}-jdk-*); \
+        ;; \
+      corretto) \
+        wget -qO - https://apt.corretto.aws/corretto.key \
+          | gpg --dearmor -o /etc/apt/keyrings/corretto.gpg; \
+        echo "deb [signed-by=/etc/apt/keyrings/corretto.gpg] https://apt.corretto.aws stable main" \
+          > /etc/apt/sources.list.d/corretto.list; \
+        apt-get update && apt-get install -y java-${JAVA_VERSION}-amazon-corretto-jdk; \
+        JDK_DIR=$(ls -d /usr/lib/jvm/java-${JAVA_VERSION}-amazon-corretto-*); \
+        ;; \
+      zulu) \
+        wget -qO - https://repos.azul.com/azul-repo.key \
+          | gpg --dearmor -o /etc/apt/keyrings/azul.gpg; \
+        echo "deb [signed-by=/etc/apt/keyrings/azul.gpg] https://repos.azul.com/zulu/deb stable main" \
+          > /etc/apt/sources.list.d/zulu.list; \
+        apt-get update && apt-get install -y zulu${JAVA_VERSION}-jdk; \
+        JDK_DIR=$(ls -d /usr/lib/jvm/zulu${JAVA_VERSION}-*); \
+        ;; \
+      *) echo "Unknown JAVA_VENDOR: ${JAVA_VENDOR}. Supported: temurin, corretto, zulu"; exit 1 ;; \
+    esac; \
+    ln -s "${JDK_DIR}" /usr/lib/jvm/java-active; \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Set JAVA_HOME (create symlink for architecture independence)
-RUN ln -s /usr/lib/jvm/temurin-25-jdk-* /usr/lib/jvm/temurin-25-jdk
-ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk
+ENV JAVA_HOME=/usr/lib/jvm/java-active
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # Install Playwright globally with Chromium browser (full + headless shell)
