@@ -2,10 +2,18 @@ This container is based on: https://code.claude.com/docs/en/devcontainer and htt
 
 # TL;DR - just get me claude in a contaner, I'll think of security later!
 
-Make a folder with a workspace folder inside it: 
+First, create the global directories for persistent login and caching:
 
 ```
-mkdir -p claude-container-instance/workspace claude-container-instance/dot-claude claude-container-instance/m2-cache 
+mkdir -p ~/.claude-container/claude
+touch ~/.claude-container/claude.json
+mkdir -p ~/.claude-m2-cache
+```
+
+Then make a folder with a workspace folder inside it:
+
+```
+mkdir -p claude-container-instance/workspace
 ```
 go into the folder and create a .env file
 
@@ -63,19 +71,22 @@ For a first test the above config disables the firewall, enables chrome CDP debu
 * etc..
 
 
-then run the prebuilt container with (caches the .m2 folder on the host for less downloads on second try): 
+then run the prebuilt container with (uses global directories for persistent login and Maven cache):
 
 ```
 docker run -it --rm \
   --cap-add=NET_ADMIN \
   --cap-add=NET_RAW \
   --env-file .env \
-  -v "./dot-claude:/home/node/.claude" \
-  -v "./m2-cache:/home/node/.m2" \
+  -v "${HOME}/.claude-container/claude:/home/node/.claude" \
+  -v "${HOME}/.claude-container/claude.json:/home/node/.claude.json" \
+  -v "${HOME}/.claude-m2-cache:/home/node/.m2" \
   -v "./workspace:/workspace" \
   -p 9222:9222 \
   ghcr.io/petrixh/claude-container:latest
 ```
+
+> **Note:** Using `~/.claude-container/` persists your login across all container instances. Log in once, use everywhere!
 
 
 Clone your projects under `/workspace`, run claude do stuff :) 
@@ -84,13 +95,21 @@ Read what the `entrypoint.sh` command tells you about versions if wou want to us
 
 # TL;DR I just want a devcontainer from my IDE/Codespaces optinally with docker-in-docker fully understanding the risks it might bring
 
-Start by checking out your project in a directory, then inside that directory, minimally you only need the `.devcontainer` directory, but the others reduce future downloads, preserves things etc. 
+First, create the global directories for persistent login (same as in the first TL;DR):
 
 ```
-mkdir .devcontainer dot-claude m2-cache 
+mkdir -p ~/.claude-container/claude
+touch ~/.claude-container/claude.json
+mkdir -p ~/.claude-m2-cache
 ```
 
-then create a deccontainer file under `.devcontainer/devcontainer.json` with the content: 
+Then check out your project in a directory, and inside that directory create the `.devcontainer` folder:
+
+```
+mkdir .devcontainer
+```
+
+then create a devcontainer file under `.devcontainer/devcontainer.json` with the content: 
 
 ```
 {
@@ -135,11 +154,13 @@ then create a deccontainer file under `.devcontainer/devcontainer.json` with the
 //      "moby": "false"
 //    }
 //  },
+  "initializeCommand": "mkdir -p \"${localEnv:HOME}/.claude-container/claude\" && touch \"${localEnv:HOME}/.claude-container/claude.json\" && mkdir -p \"${localEnv:HOME}/.claude-m2-cache\"",
   "remoteUser": "node",
   "mounts": [
-    "source=./m2-cache,target=/home/vscode/.m2,type=bind,consistency=cached",
-    //     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
-    "source=./dot-claude,target=/home/node/.claude,type=bind,consistency=cached"
+    "source=${localEnv:HOME}/.claude-container/claude,target=/home/node/.claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.claude-container/claude.json,target=/home/node/.claude.json,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.claude-m2-cache,target=/home/node/.m2,type=bind,consistency=cached",
+    "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume"
   ],
   "forwardPorts": [
     9222
