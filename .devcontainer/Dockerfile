@@ -12,7 +12,7 @@ ARG VARIANT=base
 # ========================================
 FROM node:${NODE_VERSION}-trixie AS base-common
 
-ARG TZ=Europe/Berlin
+ARG TZ=Europe/Helsinki
 
 ENV TZ=${TZ} \
     DEBIAN_FRONTEND=noninteractive \
@@ -97,6 +97,11 @@ RUN set -eux; \
 
 ENV JAVA_HOME=/usr/lib/jvm/java-active
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Maven: FS-safe file locking for concurrent builds against the shared,
+# bind-mounted ~/.m2/repository (multiple containers / worktrees in parallel).
+# Container-only on purpose — host-side IntelliJ/Maven stays untouched.
+ENV MAVEN_OPTS="-Daether.syncContext.named.factory=file-lock -Daether.syncContext.named.nameMapper=file-gav"
 
 # Install Playwright globally with Chromium browser (full + headless shell)
 # Pre-install browsers so they're included in the image and don't need to be downloaded at runtime
