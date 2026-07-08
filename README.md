@@ -137,7 +137,7 @@ then create a deccontainer file under `.devcontainer/devcontainer.json` with the
 //  },
   "remoteUser": "node",
   "mounts": [
-    "source=./m2-cache,target=/home/vscode/.m2,type=bind,consistency=cached",
+    "source=./m2-cache,target=/home/node/.m2,type=bind,consistency=cached",
     //     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
     "source=./dot-claude,target=/home/node/.claude,type=bind,consistency=cached"
   ],
@@ -243,13 +243,40 @@ Before running the container, ensure:
 
 ## Container Variants
 
-This repository provides three container variants:
+This repository provides Claude Code and OpenCode variants. The Claude Code variants:
 
 | Variant | Size | Docker | Best For | Limitations |
 |---------|------|--------|----------|-------------|
 | **`claude`** (base) ⭐ | 3.47GB | ❌ No | General Claude Code development | No Docker support |
 | **`claude-docker-host`** | 3.92GB | ✅ Via host | Docker development, testing | Requires host Docker |
 | **`claude-dind`** | 3.92GB | ✅ Isolated | Secure isolation, CI/CD | Firewall blocks Docker Hub |
+
+The OpenCode variants swap Claude Code for [sst/opencode](https://opencode.ai) but share the
+same base (Java, Playwright, firewall, Playwright Agent CLI skill):
+
+| Variant | Docker | Best For | Limitations |
+|---------|--------|----------|-------------|
+| **`opencode`** | ❌ No | General OpenCode development | No Docker support |
+| **`opencode-dind`** | ✅ Isolated | OpenCode + isolated Docker daemon | Firewall blocks Docker Hub |
+
+**Quick test of `opencode-dind`** — pull the published image and drop into a shell with a working, isolated Docker daemon:
+
+```bash
+docker run --rm -it --privileged \
+  -v claude-docker-data:/var/lib/docker \
+  -e SKIP_FIREWALL=1 \
+  ghcr.io/petrixh/claude-container-opencode-dind:latest zsh
+```
+
+Then, inside the container, confirm the nested daemon works:
+
+```bash
+docker run --rm alpine:latest echo "Hello from Docker-in-Docker"
+```
+
+Notes:
+- `--privileged` + the `claude-docker-data` volume are required for the inner daemon — the volume gives `/var/lib/docker` a non-overlay backing filesystem, otherwise `overlay2` can't mount on an overlay-backed container rootfs.
+- `SKIP_FIREWALL=1` lets the daemon pull from Docker Hub. With the firewall on, Docker Hub's CDN domains are blocked (see [Known Limitations](#known-limitations-and-workarounds)); for real Docker development use the host-socket approach instead.
 
 ### Quick Decision Guide
 
@@ -301,6 +328,12 @@ docker build -t claude-container:base --target base .devcontainer/
 
 # DinD variant (both claude-dind and claude-docker-host use this)
 docker build -t claude-container:dind --target dind .devcontainer/
+
+# OpenCode variant
+docker build -t claude-container:opencode --target opencode .devcontainer/
+
+# OpenCode DinD variant (isolated Docker daemon)
+docker build -t claude-container:opencode-dind --target opencode-dind .devcontainer/
 ```
 
 ### Interactive Shell Options
@@ -324,6 +357,12 @@ docker compose up -d claude-dind && docker compose exec claude-dind zsh
 
 # DinD variant mounting host Docker socket
 docker compose up -d claude-docker-host && docker compose exec claude-docker-host zsh
+
+# OpenCode variant
+docker compose up -d opencode && docker compose exec opencode zsh
+
+# OpenCode DinD variant (separate Docker daemon)
+docker compose up -d opencode-dind && docker compose exec opencode-dind zsh
 ```
 
 ### Option 2: Interactive Shell (Docker Run)
@@ -441,6 +480,19 @@ devcontainer up --workspace-folder . \
 # Or rename the config (backup original first)
 mv .devcontainer/devcontainer.json .devcontainer/devcontainer-base.json
 mv .devcontainer/devcontainer-dind.json .devcontainer/devcontainer.json
+```
+
+### OpenCode Variants
+Use the OpenCode configurations to run [sst/opencode](https://opencode.ai) instead of Claude Code:
+
+```bash
+# OpenCode (no Docker)
+devcontainer up --workspace-folder . \
+  --config .devcontainer/devcontainer-opencode.json
+
+# OpenCode with Docker-in-Docker (isolated daemon)
+devcontainer up --workspace-folder . \
+  --config .devcontainer/devcontainer-opencode-dind.json
 ```
 
 ## Docker-in-Docker Usage
