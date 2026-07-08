@@ -80,7 +80,7 @@ docker run -it --rm \
 
 Clone your projects under `/workspace`, run claude do stuff :) 
 
-Read what the `entrypoint.sh` command tells you about versions if wou want to use built-in predownloaded browers, playwright MCP in headless mode etc. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
+Read what the `entrypoint.sh` command tells you about versions if wou want to use built-in predownloaded browers, the Playwright Agent CLI etc. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
 
 # TL;DR I just want a devcontainer from my IDE/Codespaces optinally with docker-in-docker fully understanding the risks it might bring
 
@@ -199,7 +199,7 @@ NODE_OPTIONS=--max-old-space-size=4096
 
 If you had the folder open in VS Code, it should have already prompted you that a devcotnainer config was found. If not open the command palette and with > at the front look for "Dev Containers: Rebuild and Reopend in Container". It will download the internet and reopen the folder inside the devcotnaienr in VS Code. 
 
-Read what the `entrypoint.sh` command tells you about versions if wou want to use built-in predownloaded browers, playwright MCP in headless mode etc. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
+Read what the `entrypoint.sh` command tells you about versions if wou want to use built-in predownloaded browers, the Playwright Agent CLI etc. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
 
 ## Separate devcontainer and workspaces
 
@@ -727,17 +727,16 @@ The container includes Playwright with Chromium pre-installed, ready to use with
 The container includes **multiple versions** of Chromium to support different use cases:
 
 - **Standard Playwright Chromium** (e.g., `chromium-1208`) - For Java Playwright and direct Node.js Playwright usage
-- **Agent CLI Chromium** (e.g., `chromium-1210`) - For the Playwright Agent CLI (`@playwright/cli`, recommended for agents)
-- **MCP Playwright Chromium** (e.g., `chromium-1209`) - For Claude's browser automation tools (`@playwright/mcp`, deprecated)
+- **Agent CLI Chromium** (e.g., `chromium-1210`) - For the Playwright Agent CLI (`@playwright/cli`), used by agents for browser automation
 - **FFmpeg** (for video recording)
 
 Pre-installing each ensures the browser automation tooling works without downloading browsers at runtime.
 
 Browsers are installed at `/opt/playwright-browsers` and owned by the `node` user (writable for lock files).
 
-### Browser Automation for Agents — Playwright Agent CLI (recommended)
+### Browser Automation for Agents (Playwright Agent CLI)
 
-The recommended way for an agent to drive a browser is the [Playwright Agent CLI](https://playwright.dev/agent-cli/introduction) (`@playwright/cli`). The agent runs plain `playwright-cli` shell commands with concise output and loads skills on demand, instead of calling MCP tools whose schemas and page snapshots sit in the context window. In practice it is **faster and uses fewer tokens** than the MCP server.
+Agents drive a browser with the [Playwright Agent CLI](https://playwright.dev/agent-cli/introduction) (`@playwright/cli`): the agent runs plain `playwright-cli` shell commands with concise output and loads skills on demand. Because tool schemas and page snapshots don't sit in the context window, it's **fast and token-efficient**.
 
 **Pre-installed skill (no setup needed).** The agent-facing skill is baked into the image at `~/.claude/skills/playwright-cli`. Claude Code loads personal skills from `~/.claude/skills`, and OpenCode also discovers skills there, so both agents pick it up automatically in any project — without touching your mounted workspace.
 
@@ -752,41 +751,6 @@ playwright-cli --help                        # full command list
 ```
 
 To instead install the skill into a specific project (committed to the repo), run `playwright-cli install --skills claude` (or `--skills agents` for the agent-agnostic `.agents/skills` location).
-
-### Playwright MCP (deprecated)
-
-> **Deprecated.** The `@playwright/mcp` server is still installed and works, but the [Playwright Agent CLI](#browser-automation-for-agents--playwright-agent-cli-recommended) above is now the recommended approach. The MCP is kept for a short grace period and will be **removed from the container** in a future release — see [#27](https://github.com/petrixh/claude-container/issues/27). New setups should use the Agent CLI.
-
-To use the pre-installed MCP browsers (avoiding downloads at runtime), pin the `@playwright/mcp` version in your `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": [
-        "@playwright/mcp@0.0.64",
-        "--headless",
-        "--browser",
-        "chromium"
-      ]
-    }
-  }
-}
-```
-
-**Key options:**
-- `@playwright/mcp@X.X.X` - Pin to the installed version (check with `playwright-info`)
-- `--headless` - Run without visible browser UI (recommended for containers)
-- `--browser chromium` - Explicitly use Chromium
-
-**Check the installed MCP version:**
-```bash
-playwright-info
-# Shows: MCP Package: @playwright/mcp@0.0.64
-```
-
-Using `@latest` instead of a pinned version will download new browsers at runtime, which may be slow or fail if the firewall blocks downloads.
 
 ### Java Playwright
 
@@ -811,10 +775,6 @@ Example output:
 ```
 Standard Playwright: 1.58.1
   Chromium:          chromium-1208
-
-MCP Package:         @playwright/mcp@0.0.64
-  Playwright:        1.59.0-alpha
-  Chromium:          chromium-1209
 
 Agent CLI:           @playwright/cli@0.1.14
   Chromium:          chromium-1210
@@ -870,7 +830,7 @@ Hand this to your agent — it just needs to add the two flags wherever it launc
 2. Open `chrome://inspect`, click **Configure…**, and add `localhost:9222`.
 3. The agent-controlled browser appears as a remote target.
 
-> **Note:** Earlier images relied on the deprecated Playwright MCP plus a `cdp-proxy-monitor` socat bridge. The MCP is [deprecated](#playwright-mcp-deprecated) and the proxy is no longer needed with the fixed-port approach above.
+> **Note:** Earlier images relied on the Playwright MCP plus a `cdp-proxy-monitor` socat bridge. Both have been removed in favor of the Agent CLI and the fixed-port approach above.
 
 #### Security Note
 

@@ -150,6 +150,32 @@ jobs:
             "
           echo "PASS: opencode CLI is installed"
 
+      # Test the Playwright Agent CLI is installed, the skill is baked in, and it
+      # can launch the pre-installed Chromium offline (no runtime browser download).
+      - name: Test Playwright Agent CLI
+        if: matrix.variant == 'base' || matrix.variant == 'opencode'
+        run: |
+          echo "=== Testing Playwright Agent CLI (${{ matrix.variant }}) ==="
+          docker run --rm --entrypoint /bin/bash \
+            -e SKIP_FIREWALL=1 \
+            claude-container:${{ matrix.variant }}-test -c '
+              set -e
+              command -v playwright-cli || { echo "playwright-cli not found on PATH"; exit 1; }
+              playwright-cli --version
+
+              echo "Checking pre-installed skill..."
+              test -f /home/node/.claude/skills/playwright-cli/SKILL.md \
+                || { echo "skill SKILL.md not found"; exit 1; }
+
+              echo "Launching pre-installed browser (offline data: URL)..."
+              playwright-cli open
+              playwright-cli goto "data:text/html,<h1>cli-ok</h1>"
+              playwright-cli snapshot | grep -q "cli-ok" \
+                || { echo "expected heading not found in snapshot"; exit 1; }
+              playwright-cli close
+            '
+          echo "PASS: playwright-cli is installed, skill present, browser launches"
+
       # Build and push multi-platform images
       - name: Build and push
         uses: docker/build-push-action@v7
