@@ -91,6 +91,8 @@ The devcontainer additionally uses `.devcontainer/devcontainer.env` (gitignored)
   init-firewall.sh        # iptables firewall setup (runs at postStart)
   allowed-domains.conf    # Allowlist for outbound network access
   playwright-info.sh      # Helper script: show installed Playwright versions
+  statusline-command.sh   # Claude Code status line (model + progress bar + context %)
+  claude-language-policy.md  # Global CLAUDE.md policy: German chat, English code/docs
 docker-compose.yml        # All four service variants
 .env.example              # Environment variable template
 ```
@@ -117,3 +119,7 @@ sudo iptables -L -n -v  # inspect current rules
 ## Java / Vaadin Development
 
 The image includes Java 25 (Temurin JDK). Maven cache is mounted at `/home/node/.m2` (bind mount from host) to persist between container rebuilds. The `VAADIN_PRO_KEY` env var activates commercial Vaadin components.
+
+## Keeping This File In Sync
+
+A `Stop` hook (`.claude/hooks/claude-md-sync.sh`, wired up in `.claude/settings.json`) checks at the end of each task whether code/config files changed without a corresponding `CLAUDE.md` update. If so, it prompts Claude once to review and update this file. Update `CLAUDE.md` whenever you add/rename scripts, change build/run commands, or add configuration/env variables.

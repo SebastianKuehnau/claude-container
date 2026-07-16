@@ -1,6 +1,7 @@
 services:
   # === Base variant (current container) ===
   claude:
+    image: claude-container:latest
     build:
       context: .devcontainer
       dockerfile: Dockerfile

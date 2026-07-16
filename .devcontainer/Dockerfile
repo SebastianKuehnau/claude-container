@@ -59,6 +59,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
+# The container intentionally has no SSH identity — Git access to GitHub is via HTTPS
+RUN git config --system url."https://github.com/".insteadOf "git@github.com:" \
+ && git config --system url."https://github.com/".insteadOf "ssh://git@github.com/"
+
 # Install Java (vendor and version configurable via build args)
 # Supported vendors: temurin (default), corretto, zulu
 ARG JAVA_VERSION=25
@@ -216,12 +220,21 @@ RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
     fi \
     && ln -sf /home/node/.local/bin/claude /usr/local/bin/claude
 
+# Install Vaadin Claude Plugins
+# Note: This runs non-interactively via stdin. If it fails, the plugins can be installed
+# manually after container start using: /plugin marketplace add vaadin/agent-marketplace
+RUN su - node -c 'echo -e "/plugin marketplace add vaadin/agent-marketplace\n/plugin install vaadin-skills@vaadin-marketplace" | claude --non-interactive' || \
+    echo "Warning: Vaadin plugins could not be pre-installed. Install manually with: /plugin marketplace add vaadin/agent-marketplace"
+
 # Copy firewall, entrypoint, and helper scripts
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY init-vaadin-plugins.sh /usr/local/bin/init-vaadin-plugins.sh
 COPY playwright-info.sh /usr/local/bin/playwright-info
+COPY statusline-command.sh /usr/local/bin/statusline-command.sh
+COPY claude-language-policy.md /usr/local/etc/claude-language-policy.md
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/init-vaadin-plugins.sh /usr/local/bin/playwright-info /usr/local/bin/statusline-command.sh
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
@@ -324,12 +337,17 @@ RUN mkdir -p /var/lib/docker /var/log && chmod 755 /var/lib/docker
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
+COPY init-vaadin-plugins.sh /usr/local/bin/init-vaadin-plugins.sh
 COPY playwright-info.sh /usr/local/bin/playwright-info
+COPY statusline-command.sh /usr/local/bin/statusline-command.sh
+COPY claude-language-policy.md /usr/local/etc/claude-language-policy.md
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
 RUN chmod +x /usr/local/bin/init-firewall.sh \
              /usr/local/bin/entrypoint.sh \
              /usr/local/bin/entrypoint-dind.sh \
-             /usr/local/bin/playwright-info
+             /usr/local/bin/init-vaadin-plugins.sh \
+             /usr/local/bin/playwright-info \
+             /usr/local/bin/statusline-command.sh
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
