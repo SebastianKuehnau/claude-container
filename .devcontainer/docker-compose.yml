@@ -1,0 +1,45 @@
+# Docker Compose für .devcontainer Verzeichnis
+# Verwendung: docker-compose -f .devcontainer/docker-compose.yml up -d
+
+services:
+  claude:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TZ: ${TZ:-Europe/Berlin}
+        CLAUDE_CODE_VERSION: latest
+        VARIANT: base
+        JAVA_VERSION: ${JAVA_VERSION:-25}
+        JAVA_VENDOR: ${JAVA_VENDOR:-temurin}
+      target: base
+    container_name: ${PROJECT_NAME:-project}-claude
+    hostname: ${PROJECT_NAME:-project}-dev
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      # Persistentes Claude Login - WICHTIG!
+      - ${HOME}/.claude-container/claude:/home/node/.claude:cached
+      # Maven Cache (optional)
+      - ${HOME}/.claude-m2-cache:/home/node/.m2/repository:cached
+      # Projekt-Verzeichnis (parent von .devcontainer)
+      - ..:/workspace:delegated
+      # Bash History
+      - claude-bashhistory:/commandhistory
+    environment:
+      - TZ=${TZ:-Europe/Berlin}
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - SKIP_FIREWALL=${SKIP_FIREWALL:-1}
+      - GIT_USER_NAME=${GIT_USER_NAME:-}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
+      - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
+    ports:
+      - "9222:9222"
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+volumes:
+  claude-bashhistory:
