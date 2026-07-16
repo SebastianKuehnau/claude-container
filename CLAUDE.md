@@ -13,6 +13,19 @@ This repository contains a Docker container setup for running AI coding agents (
 - Firewall (iptables) for network access control
 - Oh My Zsh with useful aliases
 
+## claude-task
+
+`bin/claude-task` is a standalone bash script (installable without cloning
+this repo — see README "Install") that runs Claude Code per branch, one git
+worktree each, in a container. `claude-task --init` scaffolds a
+project-specific `.devcontainer/claude-task.json` (Java version/vendor,
+build tool, container variant, firewall profile, MCP servers, plugins); a
+project with this file gets its own image (`claude-task-<project>:latest`,
+built `FROM` the published GHCR base image + a SDKMAN layer) and a
+worktree-shared Maven cache at `<main-repo-root>/.devcontainer/m2-cache`.
+Projects without the config file keep the global image/cache behavior
+unchanged. Full workflow: [docs/working-with-tasks.md](docs/working-with-tasks.md).
+
 ## Build Variants
 
 The Dockerfile uses a multi-stage build with four targets:
@@ -80,6 +93,10 @@ The devcontainer additionally uses `.devcontainer/devcontainer.env` (gitignored)
 ## Architecture
 
 ```
+bin/
+  claude-task             # Standalone per-branch/worktree container-session script (see "claude-task" above)
+docs/
+  working-with-tasks.md   # claude-task daily workflow, image/cache/cleanup mechanisms
 .devcontainer/
   Dockerfile              # Multi-stage build (base-common → base/dind/opencode)
   devcontainer.json       # VS Code dev container config (base variant)
