@@ -1,0 +1,396 @@
+#!/usr/bin/env bash
+# claude-task — per-branch, containerized Claude Code sessions via git worktrees.
+#
+# Usage:
+#   claude-task <branch>       Start (or attach to) a Claude Code session for <branch>.
+#   claude-task --plan <branch>    Same, but start Claude explicitly in plan mode.
+#   claude-task --shell <branch>   Open a zsh debug shell instead of Claude.
+#   claude-task --done <branch>    Stop the container and clean up the worktree.
+#   claude-task --init [--force]   Scaffold a project-specific container config.
+#   claude-task --update           Self-update to the latest release.
+#
+# See docs/working-with-tasks.md for the full workflow.
+
+set -euo pipefail
+
+# shellcheck disable=SC2034  # used by cmd_update, implemented in a follow-up commit
+CLAUDE_TASK_VERSION="0.1.0"
+# shellcheck disable=SC2034  # used by cmd_update, implemented in a follow-up commit
+GITHUB_REPO="SebastianKuehnau/claude-container"
+GHCR_IMAGE="ghcr.io/sebastiankuehnau/claude-container"
+
+# Global (account-scoped, never project-scoped) state — matches today's
+# docker-compose.yml / devcontainer.json bind mounts exactly.
+GLOBAL_CLAUDE_DIR="${HOME}/.claude-container/claude"
+GLOBAL_CLAUDE_JSON="${HOME}/.claude-container/claude.json"
+GLOBAL_M2_CACHE="${HOME}/.claude-m2-cache"
+
+info() { printf '%s\n' "$*" >&2; }
+err()  { printf 'Error: %s\n' "$*" >&2; }
+die()  { err "$*"; exit 1; }
+
+usage() {
+  cat <<'EOF'
+claude-task — per-branch, containerized Claude Code sessions via git worktrees.
+
+Usage:
+  claude-task <branch>            Start (or attach to) a session for <branch>.
+  claude-task --plan <branch>     Same, but start Claude explicitly in plan mode.
+  claude-task --shell <branch>    Open a zsh debug shell instead of Claude.
+  claude-task --done <branch>     Stop the container and clean up the worktree.
+  claude-task --init [--force]    Scaffold a project-specific container config.
+  claude-task --update            Self-update to the latest release.
+  claude-task --help              Show this help.
+
+Modifiers (pass after the branch/subcommand):
+  --force     --init: overwrite an existing config. --done: skip the
+              uncommitted/unpushed-work safety check.
+  --rebuild   Force a project image rebuild even if the config hash matches.
+EOF
+}
+
+# --- Git worktree / project identity -----------------------------------
+
+require_git_repo() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "Not inside a git repository."
+}
+
+# Resolves the MAIN repo's working-tree root, even when invoked from inside
+# a linked worktree. --git-common-dir (unlike --git-dir) always points at the
+# shared .git directory; from a worktree, --git-dir would instead return the
+# per-worktree .git/worktrees/<name> path, which is the wrong anchor for
+# cache/image identity that must be shared across all worktrees of a project.
+resolve_main_repo_root() {
+  local common_dir
+  common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+    || die "Could not resolve the git common directory."
+  if [[ "$(basename "$common_dir")" == ".git" ]]; then
+    dirname "$common_dir"
+  else
+    # Bare-repo layout: the common dir *is* the project root, no .git to strip.
+    printf '%s\n' "$common_dir"
+  fi
+}
+
+# Docker container/tag names allow only [a-zA-Z0-9][a-zA-Z0-9_.-]*, no slashes.
+# Lowercase everything and collapse disallowed runs to a single '-'.
+sanitize() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-.]+//; s/-+$//'
+}
+
+project_name() {
+  local root="$1" name
+  name="$(basename "$root")"
+  name="${name%.git}"
+  sanitize "$name"
+}
+
+worktree_path() {
+  local main_repo_root="$1" branch="$2"
+  local base
+  base="$(dirname "$main_repo_root")/$(basename "$main_repo_root")-worktrees"
+  printf '%s/%s\n' "$base" "$branch"
+}
+
+worktree_exists() {
+  local main_repo_root="$1" path="$2"
+  git -C "$main_repo_root" worktree list --porcelain \
+    | awk -v p="$path" '$1=="worktree" && $2==p { found=1 } END { exit !found }'
+}
+
+find_or_create_worktree() {
+  local main_repo_root="$1" branch="$2"
+  local path
+  path="$(worktree_path "$main_repo_root" "$branch")"
+
+  if worktree_exists "$main_repo_root" "$path"; then
+    printf '%s\n' "$path"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$path")"
+
+  if git -C "$main_repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
+    info "Adding worktree for existing local branch '$branch'..."
+    git -C "$main_repo_root" worktree add "$path" "$branch" >&2
+  elif git -C "$main_repo_root" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    info "Adding worktree tracking 'origin/$branch'..."
+    git -C "$main_repo_root" worktree add --track -b "$branch" "$path" "origin/$branch" >&2
+  else
+    info "Adding worktree on new branch '$branch' (off current HEAD)..."
+    git -C "$main_repo_root" worktree add -b "$branch" "$path" >&2
+  fi
+
+  printf '%s\n' "$path"
+}
+
+# --- Project config ------------------------------------------------------
+
+config_path() {
+  printf '%s/.devcontainer/claude-task.json\n' "$1"
+}
+
+has_project_config() {
+  [[ -f "$(config_path "$1")" ]]
+}
+
+cfg_get() {
+  local cfg="$1" filter="$2" default="$3"
+  jq -r "${filter} // \"${default}\"" "$cfg"
+}
+
+# --- Image build / naming ------------------------------------------------
+
+image_tag_for_project() {
+  printf 'claude-task-%s:latest\n' "$1"
+}
+
+container_name_for() {
+  local project="$1" branch="$2"
+  printf 'claude-%s-%s\n' "$project" "$(sanitize "$branch")"
+}
+
+config_hash() {
+  sha256sum "$1" | cut -c1-12
+}
+
+needs_rebuild() {
+  local image_tag="$1" dockerfile="$2" want have
+  want=$(config_hash "$dockerfile")
+  have=$(docker image inspect --format '{{ index .Config.Labels "com.claude-task.config-hash" }}' "$image_tag" 2>/dev/null) || return 0
+  [[ "$have" != "$want" ]]
+}
+
+build_project_image() {
+  local worktree="$1" image_tag="$2" force_rebuild="$3"
+  local dockerfile="$worktree/.devcontainer/claude-task.Dockerfile"
+  [[ -f "$dockerfile" ]] || die "Missing $dockerfile — run 'claude-task --init' first."
+
+  if [[ "$force_rebuild" == 1 ]] || needs_rebuild "$image_tag" "$dockerfile"; then
+    info "Building project image '$image_tag'..."
+    local pull_flags=()
+    [[ "$force_rebuild" == 1 ]] && pull_flags=(--pull --no-cache)
+    docker build "${pull_flags[@]}" \
+      -f "$dockerfile" \
+      -t "$image_tag" \
+      --label "com.claude-task.config-hash=$(config_hash "$dockerfile")" \
+      "$worktree/.devcontainer" >&2
+  else
+    info "Project image '$image_tag' is up to date."
+  fi
+}
+
+# Global (unconfigured-project) fallback: reproduces today's docker-compose/
+# devcontainer.json behavior exactly — no regression for projects that never
+# ran --init. Builds locally only when invoked from inside claude-container
+# itself; otherwise pulls the published image so no clone is required.
+ensure_global_image() {
+  local main_repo_root="$1"
+  if [[ -f "$main_repo_root/.devcontainer/Dockerfile" ]]; then
+    info "Building base image 'claude-container:latest' from local Dockerfile..."
+    docker build \
+      -f "$main_repo_root/.devcontainer/Dockerfile" \
+      --target base \
+      --build-arg "JAVA_VERSION=${JAVA_VERSION:-25}" \
+      --build-arg "JAVA_VENDOR=${JAVA_VENDOR:-temurin}" \
+      -t claude-container:latest \
+      "$main_repo_root/.devcontainer" >&2
+    printf 'claude-container:latest\n'
+  else
+    info "Pulling '${GHCR_IMAGE}:latest'..."
+    docker pull "${GHCR_IMAGE}:latest" >&2
+    printf '%s:latest\n' "$GHCR_IMAGE"
+  fi
+}
+
+# --- Container run --------------------------------------------------------
+
+# Builds the `docker run` argument array for a session. Echoes nothing;
+# populates the RUN_ARGS array in the caller's scope.
+build_run_args() {
+  local worktree="$1" image_tag="$2" container_name="$3" cache_dir="$4" firewall="$5"
+
+  RUN_ARGS=(
+    run -it --rm
+    --name "$container_name"
+    --cap-add=NET_ADMIN --cap-add=NET_RAW
+    -v "${GLOBAL_CLAUDE_DIR}:/home/node/.claude:cached"
+    -v "${GLOBAL_CLAUDE_JSON}:/home/node/.claude.json"
+    -v "${cache_dir}:/home/node/.m2/repository:cached"
+    -v "${worktree}:/workspace:delegated"
+    -e "TZ=${TZ:-Europe/Helsinki}"
+    -e "GH_TOKEN=${GH_TOKEN:-}"
+    -e "GIT_USER_NAME=${GIT_USER_NAME:-}"
+    -e "GIT_USER_EMAIL=${GIT_USER_EMAIL:-}"
+    -e "NODE_OPTIONS=--max-old-space-size=4096"
+    -e "CLAUDE_CONFIG_DIR=/home/node/.claude"
+    -e "DEVCONTAINER=true"
+    -e "VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}"
+    -e "NOTIFICATION_URL=${NOTIFICATION_URL:-}"
+    -p "9222:9222"
+    -w /workspace
+  )
+
+  if [[ "$firewall" == "open" ]]; then
+    RUN_ARGS+=(-e "SKIP_FIREWALL=1")
+  fi
+}
+
+running_container() {
+  docker ps --format '{{.Names}}' | grep -qx "$1"
+}
+
+cmd_start() {
+  local mode="$1"; shift
+  local branch="" rebuild=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --rebuild) rebuild=1 ;;
+      --*) die "Unknown flag for this command: $1" ;;
+      *) branch="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$branch" ]] || die "Usage: claude-task [--plan|--shell] <branch>"
+
+  require_git_repo
+  local main_repo_root project worktree
+  main_repo_root="$(resolve_main_repo_root)"
+  project="$(project_name "$main_repo_root")"
+  worktree="$(find_or_create_worktree "$main_repo_root" "$branch")"
+
+  local image_tag cache_dir firewall container_name
+  container_name="$(container_name_for "$project" "$branch")"
+
+  if has_project_config "$worktree"; then
+    local cfg; cfg="$(config_path "$worktree")"
+    firewall="$(cfg_get "$cfg" '.firewall' 'allowlist')"
+    image_tag="$(image_tag_for_project "$project")"
+    cache_dir="${main_repo_root}/.devcontainer/m2-cache"
+    mkdir -p "$cache_dir"
+    build_project_image "$worktree" "$image_tag" "$rebuild"
+  else
+    firewall="allowlist"
+    image_tag="$(ensure_global_image "$main_repo_root")"
+    cache_dir="$GLOBAL_M2_CACHE"
+    mkdir -p "$cache_dir"
+  fi
+
+  # Reuse a live container for --shell (attach a second terminal alongside
+  # a running Claude session); other modes always start a fresh, --rm'd run.
+  if [[ "$mode" == "shell" ]] && running_container "$container_name"; then
+    info "Attaching zsh shell to running container '$container_name'..."
+    exec docker exec -it "$container_name" /bin/zsh
+  fi
+
+  if running_container "$container_name"; then
+    die "Container '$container_name' is already running. Use 'claude-task --shell $branch' to attach, or 'claude-task --done $branch' to stop it first."
+  fi
+
+  local -a RUN_ARGS
+  build_run_args "$worktree" "$image_tag" "$container_name" "$cache_dir" "$firewall"
+
+  case "$mode" in
+    claude) RUN_ARGS+=("$image_tag" claude) ;;
+    plan)   RUN_ARGS+=("$image_tag" claude --permission-mode plan) ;;
+    shell)  RUN_ARGS+=("$image_tag" /bin/zsh) ;;
+    *) die "Internal error: unknown mode '$mode'" ;;
+  esac
+
+  info "Starting container '$container_name' (image: $image_tag, mode: $mode)..."
+  exec docker "${RUN_ARGS[@]}"
+}
+
+cmd_done() {
+  local branch="" force=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=1 ;;
+      --*) die "Unknown flag for this command: $1" ;;
+      *) branch="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$branch" ]] || die "Usage: claude-task --done <branch>"
+
+  require_git_repo
+  local main_repo_root project worktree container_name
+  main_repo_root="$(resolve_main_repo_root)"
+  project="$(project_name "$main_repo_root")"
+  worktree="$(worktree_path "$main_repo_root" "$branch")"
+  container_name="$(container_name_for "$project" "$branch")"
+
+  if ! worktree_exists "$main_repo_root" "$worktree"; then
+    die "No worktree found for branch '$branch' at $worktree"
+  fi
+
+  if [[ "$force" != 1 ]]; then
+    local dirty upstream unpushed
+    dirty="$(git -C "$worktree" status --porcelain)"
+    if [[ -n "$dirty" ]]; then
+      die "Worktree has uncommitted changes — commit, stash, or discard them first (or re-run with --force to remove anyway):
+  $worktree"
+    fi
+    if upstream="$(git -C "$worktree" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"; then
+      unpushed="$(git -C "$worktree" log "${upstream}.." --oneline)"
+      if [[ -n "$unpushed" ]]; then
+        die "Worktree has commits not pushed to '$upstream' — push them or open a PR first (or re-run with --force):
+  $worktree"
+      fi
+    else
+      info "Branch '$branch' has no upstream — skipping push check (commits, if any, only exist locally in this worktree)."
+    fi
+  fi
+
+  if docker ps -a --format '{{.Names}}' | grep -qx "$container_name"; then
+    info "Removing container '$container_name'..."
+    docker rm -f "$container_name" >/dev/null
+  fi
+
+  info "Removing worktree '$worktree'..."
+  git -C "$main_repo_root" worktree remove --force "$worktree"
+  info "Done. Branch '$branch' itself was left intact — delete it manually if no longer needed."
+}
+
+# --- Subcommands implemented in later steps -------------------------------
+
+cmd_init() {
+  die "claude-task --init is not implemented yet (tracked as a follow-up commit)."
+}
+
+cmd_update() {
+  die "claude-task --update is not implemented yet (tracked as a follow-up commit)."
+}
+
+# --- Dispatch --------------------------------------------------------------
+
+main() {
+  local cmd="${1:-}"
+  case "$cmd" in
+    --init)
+      shift; cmd_init "$@" ;;
+    --plan)
+      shift; cmd_start plan "$@" ;;
+    --shell)
+      shift; cmd_start shell "$@" ;;
+    --done)
+      shift; cmd_done "$@" ;;
+    --update)
+      shift; cmd_update "$@" ;;
+    --help|-h|"")
+      usage
+      [[ -z "$cmd" ]] && exit 1 || exit 0 ;;
+    --*)
+      err "Unknown option: $cmd"
+      usage
+      exit 1 ;;
+    *)
+      cmd_start claude "$@" ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
+  main "$@"
+fi
