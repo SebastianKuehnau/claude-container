@@ -13,9 +13,7 @@
 
 set -euo pipefail
 
-# shellcheck disable=SC2034  # used by cmd_update, implemented in a follow-up commit
 CLAUDE_TASK_VERSION="0.1.0"
-# shellcheck disable=SC2034  # used by cmd_update, implemented in a follow-up commit
 GITHUB_REPO="SebastianKuehnau/claude-container"
 GHCR_IMAGE="ghcr.io/sebastiankuehnau/claude-container"
 
@@ -719,8 +717,53 @@ cmd_init() {
   echo "  git commit -m \"chore: add claude-task project config\""
 }
 
+# --- Distribution / self-update -------------------------------------------
+#
+# Initial install is a two-step curl (see README's "Install" section) — this
+# script can't bootstrap itself. --update repeats the same fetch against the
+# already-installed path.
+
+resolve_latest_tag() {
+  curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
+    | jq -r '.tag_name // empty'
+}
+
 cmd_update() {
-  die "claude-task --update is not implemented yet (tracked as a follow-up commit)."
+  local installed_path
+  installed_path="$(command -v claude-task 2>/dev/null || true)"
+  [[ -n "$installed_path" ]] || installed_path="${HOME}/.local/bin/claude-task"
+  if command -v readlink >/dev/null 2>&1; then
+    installed_path="$(readlink -f "$installed_path" 2>/dev/null || printf '%s' "$installed_path")"
+  fi
+
+  info "Checking latest release of ${GITHUB_REPO}..."
+  local tag
+  tag="$(resolve_latest_tag)"
+  [[ -n "$tag" ]] || die "Could not resolve the latest release (check network access / rate limits)."
+
+  local tmp url
+  tmp="$(mktemp)"
+  url="https://raw.githubusercontent.com/${GITHUB_REPO}/${tag}/bin/claude-task"
+  info "Downloading ${url}..."
+  curl -fsSL -o "$tmp" "$url" || { rm -f "$tmp"; die "Download failed."; }
+
+  local new_version
+  new_version="$(grep -m1 '^CLAUDE_TASK_VERSION=' "$tmp" | cut -d'"' -f2)"
+  if [[ -z "$new_version" ]]; then
+    rm -f "$tmp"
+    die "Downloaded file doesn't look like claude-task (no version string found)."
+  fi
+
+  chmod +x "$tmp"
+  mkdir -p "$(dirname "$installed_path")"
+  mv "$tmp" "$installed_path"
+
+  if [[ "$new_version" == "$CLAUDE_TASK_VERSION" ]]; then
+    info "Already up to date (v${CLAUDE_TASK_VERSION}, ${tag})."
+  else
+    info "Updated: v${CLAUDE_TASK_VERSION} -> v${new_version} (${tag})"
+    info "Installed at: ${installed_path}"
+  fi
 }
 
 # --- Dispatch --------------------------------------------------------------
