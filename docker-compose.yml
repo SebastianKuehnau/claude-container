@@ -32,8 +32,6 @@ services:
       - DEVCONTAINER=true
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
       - NOTIFICATION_URL=${NOTIFICATION_URL:-}
-    ports:
-      - "9222:9222"
     working_dir: /workspace
     stdin_open: true
     tty: true
@@ -76,8 +74,6 @@ services:
       - DOCKER_HOST=unix:///var/run/docker.sock
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
       - NOTIFICATION_URL=${NOTIFICATION_URL:-}
-    ports:
-      - "9222:9222"
     working_dir: /workspace
     stdin_open: true
     tty: true
@@ -116,8 +112,6 @@ services:
       - DOCKER_HOST=unix:///var/run/docker.sock
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
       - NOTIFICATION_URL=${NOTIFICATION_URL:-}
-    ports:
-      - "9222:9222"
     working_dir: /workspace
     stdin_open: true
     tty: true
@@ -152,8 +146,6 @@ services:
       - NODE_OPTIONS=--max-old-space-size=4096
       - DEVCONTAINER=true
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
-    ports:
-      - "9222:9222"
     working_dir: /workspace
     stdin_open: true
     tty: true
@@ -192,8 +184,6 @@ services:
       - DEVCONTAINER=true
       - DOCKER_HOST=unix:///var/run/docker.sock
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
-    ports:
-      - "9222:9222"
     working_dir: /workspace
     stdin_open: true
     tty: true
