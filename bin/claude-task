@@ -208,7 +208,7 @@ ensure_global_image() {
 # Builds the `docker run` argument array for a session. Echoes nothing;
 # populates the RUN_ARGS array in the caller's scope.
 build_run_args() {
-  local worktree="$1" image_tag="$2" container_name="$3" cache_dir="$4" firewall="$5"
+  local worktree="$1" image_tag="$2" container_name="$3" cache_dir="$4" firewall="$5" main_repo_root="$6"
 
   RUN_ARGS=(
     run -it --rm
@@ -230,6 +230,18 @@ build_run_args() {
     -p "9222:9222"
     -w /workspace
   )
+
+  # A git worktree's /workspace/.git is a FILE, not a directory: it points (by
+  # absolute host path) into the main repo's .git/worktrees/<name>, and that
+  # metadir's `commondir` points back up to the main repo's .git. Neither lives
+  # under the worktree, so mounting only the worktree leaves git unable to
+  # resolve its git dir ("fatal: not a git repository"). Mount the main repo's
+  # .git at the SAME absolute path it has on the host so both the `gitdir:`
+  # pointer and `commondir` resolve unchanged inside the container.
+  local main_git_dir="${main_repo_root}/.git"
+  if [[ -d "$main_git_dir" ]]; then
+    RUN_ARGS+=(-v "${main_git_dir}:${main_git_dir}:cached")
+  fi
 
   if [[ "$firewall" == "open" ]]; then
     RUN_ARGS+=(-e "SKIP_FIREWALL=1")
@@ -288,7 +300,7 @@ cmd_start() {
   fi
 
   local -a RUN_ARGS
-  build_run_args "$worktree" "$image_tag" "$container_name" "$cache_dir" "$firewall"
+  build_run_args "$worktree" "$image_tag" "$container_name" "$cache_dir" "$firewall" "$main_repo_root"
 
   case "$mode" in
     claude) RUN_ARGS+=("$image_tag" claude) ;;
@@ -422,13 +434,22 @@ USER root
 
 # SDKMAN: single mechanism for the Java-version/vendor override and the
 # build-tool install (Maven/Gradle aren't in the base image at all).
-RUN curl -s "https://get.sdkman.io" | bash
+# - zip/unzip are SDKMAN hard dependencies and are NOT in the base image.
+# - SDKMAN_DIR must be exported BEFORE the installer runs; otherwise the
+#   installer (running as root) writes to /root/.sdkman and the later
+#   sdkman-init.sh lookups under /home/node/.sdkman miss.
+RUN apt-get update && apt-get install -y --no-install-recommends zip unzip \
+    && rm -rf /var/lib/apt/lists/*
 ENV SDKMAN_DIR=/home/node/.sdkman
+RUN curl -s "https://get.sdkman.io" | bash
 RUN bash -lc 'source "$SDKMAN_DIR/bin/sdkman-init.sh" \
     && CANDIDATE=$(sdk list java 2>/dev/null | grep -oE "__JAVA_VERSION__\.[0-9.]+-__VENDOR_TAG__" | head -1) \
     && if [ -z "$CANDIDATE" ]; then echo "No SDKMAN candidate found for __JAVA_VERSION__-__VENDOR_TAG__" >&2; exit 1; fi \
     && sdk install java "$CANDIDATE"'
 __BUILD_TOOL_LINE__
+# SDKMAN was installed as root; hand the tree to the node user so the final
+# runtime user can use `sdk` and the installed candidates.
+RUN chown -R node:node /home/node/.sdkman
 ENV JAVA_HOME=/home/node/.sdkman/candidates/java/current
 ENV PATH="${JAVA_HOME}/bin:/home/node/.sdkman/candidates/maven/current/bin:/home/node/.sdkman/candidates/gradle/current/bin:${PATH}"
 # MAVEN_OPTS file-locking is inherited from the base image — do not override.
@@ -508,6 +529,10 @@ EOF
 # Vaadin (uncomment maven/tools/cdn if using commercial components)
 mcp.vaadin.com
 vaadin.com
+
+# Javadoc MCP (www.javadocs.dev/mcp) — Java library docs via MCP
+javadocs.dev
+www.javadocs.dev
 
 # Custom domains (add your own below)
 EOF
