@@ -55,36 +55,17 @@ docker-compose services:
   pre-installed at build time, with a start-time fallback installer.
 - **Node.js 22** with an increased heap (`--max-old-space-size=4096`).
 
-## 4. Browser automation (Playwright)
-
-All Chromium builds are pre-installed at image-build time
-(`/opt/playwright-browsers`), so nothing is downloaded at runtime (which the
-firewall would otherwise block):
-
-- **Playwright Agent CLI** (`playwright-cli`) — the recommended path for
-  agents: lower token use than MCP, with a skill pre-installed at
-  `~/.claude/skills/playwright-cli` that Claude Code *and* OpenCode both
-  discover automatically.
-- **Playwright MCP** (`@playwright/mcp`) — deprecated but still available
-  for existing setups.
-- **Java Playwright** — GUI libraries (`libgtk-3`, `libXcursor`) and
-  `PLAYWRIGHT_BROWSERS_PATH` pre-configured for integration tests.
-- **Chrome DevTools remote debugging (CDP)** — port 9222 exposed; the host
-  can attach via `chrome://inspect` to the browser the agent drives (the two
-  required launch flags are printed on start).
-- **`playwright-info`** — prints installed versions and Chromium build IDs.
-
-## 5. Network firewall (security)
+## 4. Network firewall (security)
 
 - **Domain-whitelist firewall** (iptables, default-deny on `OUTPUT`) — only
   approved domains are reachable.
 - A **default allowlist** is baked in (Anthropic API, npm, GitHub, Maven
-  Central, Playwright, VS Code marketplace, optionally Docker Hub).
+  Central, VS Code marketplace, optionally Docker Hub).
 - **Per-project allowlist** via `/workspace/.devcontainer/allowed-domains.conf`.
 - **Runtime control** — `firewall-reload`, `firewall-status`.
 - **Toggle off** — `SKIP_FIREWALL=1` (e.g. for DinD Docker Hub pulls).
 
-## 6. `claude-task` — per-branch containerized sessions
+## 5. `claude-task` — per-branch containerized sessions
 
 A standalone Bash script (`bin/claude-task`), installable **without cloning
 this repository**. It wraps everything above into one command:
@@ -95,7 +76,7 @@ this repository**. It wraps everything above into one command:
 | `claude-task --plan <branch>` | Same, but start Claude in plan mode |
 | `claude-task --shell <branch>` | Debug zsh shell instead of Claude (attaches to a running container) |
 | `claude-task --done <branch>` | Stop the container, remove the worktree (refuses on uncommitted/unpushed work) |
-| `claude-task --init [--force]` | Scaffold a project-specific config (see §7) |
+| `claude-task --init [--force]` | Scaffold a project-specific config (see §6) |
 | `claude-task --update` | Self-update to the latest release |
 
 **Parallelism** — because each branch runs in its own worktree
@@ -111,7 +92,7 @@ the same project can run isolated sessions side by side.
 - **Config-hash-based rebuilds** — the image is rebuilt only when the
   rendered Dockerfile changes (`--rebuild` forces it regardless).
 
-## 7. `claude-task --init` — project scaffolding
+## 6. `claude-task --init` — project scaffolding
 
 Five questions (Java version, Java vendor, build tool maven/gradle/none,
 container variant, firewall profile) plus optional MCP-server and plugin
@@ -125,7 +106,7 @@ picks. It stages (never commits) a tailored setup:
 - `.claude/settings.json` — includes deny rules against destructive commands (written once, never overwritten)
 - `CLAUDE.md` skeleton, `tasks/` directory, and `.gitignore` entries
 
-## 8. Persistent authentication & state
+## 7. Persistent authentication & state
 
 - **Login persistence** — a dedicated host directory (`~/.claude-container/`)
   keeps `claude login` valid across all containers, worktrees, and rebuilds;
@@ -136,7 +117,7 @@ picks. It stages (never commits) a tailored setup:
   over SSH for GitHub access.
 - **Persistent shell history** — via a named volume.
 
-## 9. Agent quality-of-life
+## 8. Agent quality-of-life
 
 - **Notifications** — `NOTIFICATION_URL` (e.g. ntfy.sh, Slack webhook);
   hooks fire on idle / permission prompt / elicitation.
@@ -147,10 +128,10 @@ picks. It stages (never commits) a tailored setup:
 - **Oh My Zsh** with helpful aliases, configurable timezone, passwordless
   sudo for the `node` user.
 
-## 10. CI/CD & maintenance
+## 9. CI/CD & maintenance
 
 - GitHub Actions builds all three variants (base/dind/opencode) multi-arch,
-  **tests** Playwright browser launch, `VAADIN_PRO_KEY` passthrough, and the
+  **tests** `VAADIN_PRO_KEY` passthrough and the
   OpenCode CLI, then pushes to GHCR on push and on a weekly schedule.
 - **Dependabot** configured for dependency updates.
 
@@ -158,6 +139,6 @@ picks. It stages (never commits) a tailored setup:
 
 A turnkey, secured (firewall + deny rules + isolation) environment for
 running Claude Code or OpenCode against Java/Vaadin projects — with
-pre-installed browser automation, persistent login/cache, and, through
+persistent login/cache, and, through
 `claude-task`, a branch-parallel worktree workflow that builds a tailored
 Java/build environment per project.

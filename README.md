@@ -45,12 +45,6 @@ CLAUDE_CONFIG_DIR=/home/node/.claude
 # Skip firewall initialization (set to 1 to disable)
 SKIP_FIREWALL=1
 
-# Playwright browsers path (pre-installed in image)
-PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
-
-# Skip Playwright browser downloads (browsers are pre-installed)
-PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-
 # Notification URL (e.g., ntfy.sh) - called when Claude is idle or needs permission
 # Supports any URL that accepts POST requests (ntfy.sh, webhooks, etc.)
 # NOTIFICATION_URL=https://ntfy.sh/your-topic-here
@@ -63,7 +57,7 @@ PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 NODE_OPTIONS=--max-old-space-size=4096
 ```
 
-For a first test the above config disables the firewall, enables chrome CDP debuggin on port 9222 (if enabled inside the container etc). 
+For a first test the above config disables the firewall. 
 
 * If you want to commit inside the container, you probably want to set the `GIT_USER` related params
 * If you want to use Vaadin commercial components, either set your `proKey` (just the value starting with `pro-` in the environment variable, or later inside the contaier `mkdir -p ~/.vaadin && nano ~/node/.vaadin/proKey` and copy your entire prokey from a different system (or follow the browser process to sign in...)
@@ -82,7 +76,6 @@ docker run -it --rm \
   -v "${HOME}/.claude-container/claude.json:/home/node/.claude.json" \
   -v "${HOME}/.claude-m2-cache:/home/node/.m2" \
   -v "./workspace:/workspace" \
-  -p 9222:9222 \
   ghcr.io/petrixh/claude-container:latest
 ```
 
@@ -91,7 +84,7 @@ docker run -it --rm \
 
 Clone your projects under `/workspace`, run claude do stuff :) 
 
-Read what the `entrypoint.sh` command tells you about versions if wou want to use built-in predownloaded browers, the Playwright Agent CLI etc. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
+Read what the `entrypoint.sh` command tells you about installed versions. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
 
 # TL;DR I just want a devcontainer from my IDE/Codespaces optinally with docker-in-docker fully understanding the risks it might bring
 
@@ -128,8 +121,6 @@ then create a devcontainer file under `.devcontainer/devcontainer.json` with the
   //   "GIT_USER_EMAIL": "${localEnv:GIT_USER_EMAIL}",
   //   "NODE_OPTIONS": "--max-old-space-size=4096",
   //   "CLAUDE_CONFIG_DIR": "/home/node/.claude",
-  //   "PLAYWRIGHT_BROWSERS_PATH": "/opt/playwright-browsers",
-  //   "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
   //   //"VAADIN_PRO_KEY": "${localEnv:VAADIN_PRO_KEY}",
   //   "NOTIFICATION_URL": "${localEnv:NOTIFICATION_URL}",
   // },
@@ -162,15 +153,6 @@ then create a devcontainer file under `.devcontainer/devcontainer.json` with the
     "source=${localEnv:HOME}/.claude-m2-cache,target=/home/node/.m2,type=bind,consistency=cached",
     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume"
   ],
-  "forwardPorts": [
-    9222
-  ],
-  "portsAttributes": {
-    "9222": {
-      "label": "Playwright CDP",
-      "onAutoForward": "silent"
-    }
-  },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
   "postStartCommand": "/usr/local/bin/entrypoint.sh"
@@ -200,12 +182,6 @@ CLAUDE_CONFIG_DIR=/home/node/.claude
 # Skip firewall initialization (set to 1 to disable)
 SKIP_FIREWALL=1
 
-# Playwright browsers path (pre-installed in image)
-PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
-
-# Skip Playwright browser downloads (browsers are pre-installed)
-PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-
 # Notification URL (e.g., ntfy.sh) - called when Claude is idle or needs permission
 # Supports any URL that accepts POST requests (ntfy.sh, webhooks, etc.)
 # NOTIFICATION_URL=https://ntfy.sh/your-topic-here
@@ -220,7 +196,7 @@ NODE_OPTIONS=--max-old-space-size=4096
 
 If you had the folder open in VS Code, it should have already prompted you that a devcotnainer config was found. If not open the command palette and with > at the front look for "Dev Containers: Rebuild and Reopend in Container". It will download the internet and reopen the folder inside the devcotnaienr in VS Code. 
 
-Read what the `entrypoint.sh` command tells you about versions if wou want to use built-in predownloaded browers, the Playwright Agent CLI etc. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
+Read what the `entrypoint.sh` command tells you about installed versions. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
 
 # TL;DR — claude-task: one command, per-branch containers, zero setup
 
@@ -314,7 +290,6 @@ Below is a more compehensive example with instructions etc... Reading through th
 A Docker devcontainer for running Claude Code in a sandboxed environment with:
 - Node.js 20
 - Java 21 (Eclipse Temurin)
-- Playwright with headless Chromium (arm64/amd64)
 - GitHub CLI with PAT authentication
 - Domain-whitelist firewall (default deny)
 - Configurable Claude config directory for subscription authentication
@@ -400,7 +375,7 @@ This repository provides Claude Code and OpenCode variants. The Claude Code vari
 | **`claude-dind`** | 3.92GB | ✅ Isolated | Secure isolation, CI/CD | Firewall blocks Docker Hub |
 
 The OpenCode variants swap Claude Code for [sst/opencode](https://opencode.ai) but share the
-same base (Java, Playwright, firewall, Playwright Agent CLI skill):
+same base (Java, firewall):
 
 | Variant | Docker | Best For | Limitations |
 |---------|--------|----------|-------------|
@@ -583,7 +558,6 @@ docker run -it --rm \
   -v "${HOME}/.npm-cache:/home/node/.npm" \
   -v "${HOME}/.config/gh:/home/node/.config/gh" \
   -v "$(pwd):/workspace" \
-  -p 9222:9222 \
   claude-container:base
 ```
 
@@ -779,7 +753,6 @@ The container uses a domain-whitelist firewall that blocks all outbound traffic 
 - `registry.npmjs.org` - NPM packages
 - `github.com`, `api.github.com` - GitHub
 - `repo1.maven.org`, `repo.maven.apache.org` - Maven Central
-- `playwright.azureedge.net` - Playwright browser downloads
 - VS Code marketplace domains
 - `registry-1.docker.io`, `auth.docker.io` - Docker Hub (DinD variant)
 
@@ -832,8 +805,6 @@ firewall-reload
 | `SKIP_FIREWALL` | Set to `1` to skip firewall initialization (useful for DinD troubleshooting) |
 | `FIREWALL_CONFIG` | Custom path to allowed-domains.conf (default: workspace or `/usr/local/etc`) |
 | `DOCKER_HOST` | Docker daemon socket (default: `unix:///var/run/docker.sock`) |
-| `PLAYWRIGHT_BROWSERS_PATH` | Path to pre-installed Playwright browsers (default: `/opt/playwright-browsers`) |
-| `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD` | Set to `1` to skip browser downloads (default: `1`, browsers are pre-installed) |
 | `NOTIFICATION_URL` | URL to POST notifications to when Claude is idle or needs permission (e.g., `https://ntfy.sh/your-topic`) |
 | `VAADIN_PRO_KEY` | Vaadin Pro/Commercial subscription key for commercial components (Charts, Board, etc.) and Acceleration Kits |
 
@@ -920,124 +891,6 @@ Or add them at runtime:
 echo -e "maven.vaadin.com\ntools.vaadin.com\nvaadin.com\ncdn.vaadin.com" | sudo tee -a /usr/local/etc/allowed-domains.conf
 firewall-reload
 ```
-
-## Playwright
-
-The container includes Playwright with Chromium pre-installed, ready to use with both Node.js and Java Playwright libraries.
-
-### Pre-installed Browsers
-
-The container includes **multiple versions** of Chromium to support different use cases:
-
-- **Standard Playwright Chromium** (e.g., `chromium-1208`) - For Java Playwright and direct Node.js Playwright usage
-- **Agent CLI Chromium** (e.g., `chromium-1210`) - For the Playwright Agent CLI (`@playwright/cli`), used by agents for browser automation
-- **FFmpeg** (for video recording)
-
-Pre-installing each ensures the browser automation tooling works without downloading browsers at runtime.
-
-Browsers are installed at `/opt/playwright-browsers` and owned by the `node` user (writable for lock files).
-
-### Browser Automation for Agents (Playwright Agent CLI)
-
-Agents drive a browser with the [Playwright Agent CLI](https://playwright.dev/agent-cli/introduction) (`@playwright/cli`): the agent runs plain `playwright-cli` shell commands with concise output and loads skills on demand. Because tool schemas and page snapshots don't sit in the context window, it's **fast and token-efficient**.
-
-**Pre-installed skill (no setup needed).** The agent-facing skill is baked into the image at `~/.claude/skills/playwright-cli`. Claude Code loads personal skills from `~/.claude/skills`, and OpenCode also discovers skills there, so both agents pick it up automatically in any project — without touching your mounted workspace.
-
-**Quick use:**
-```bash
-playwright-cli open                         # launch the browser (headless by default)
-playwright-cli goto https://example.com     # navigate
-playwright-cli snapshot                      # accessibility snapshot with element refs
-playwright-cli click e15                     # interact using a ref from the snapshot
-playwright-cli close
-playwright-cli --help                        # full command list
-```
-
-To instead install the skill into a specific project (committed to the repo), run `playwright-cli install --skills claude` (or `--skills agents` for the agent-agnostic `.agents/skills` location).
-
-### Java Playwright
-
-The container is configured to work with Java Playwright out of the box:
-
-- `PLAYWRIGHT_BROWSERS_PATH` points to pre-installed browsers
-- `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` prevents unnecessary download attempts
-- Required GUI libraries (`libgtk-3`, `libXcursor`) are pre-installed
-
-**Important:** Match your Java Playwright version to the container's Playwright version to use pre-installed browsers.
-
-**Check compatibility info:**
-```bash
-# Inside the container, run:
-playwright-info
-
-# Or check the VERSION file directly:
-cat /opt/playwright-browsers/VERSION
-```
-
-Example output:
-```
-Standard Playwright: 1.58.1
-  Chromium:          chromium-1208
-
-Agent CLI:           @playwright/cli@0.1.14
-  Chromium:          chromium-1210
-  Skill:             ~/.claude/skills/playwright-cli
-```
-
-Use this version in your Maven `pom.xml`:
-```xml
-<dependency>
-    <groupId>com.microsoft.playwright</groupId>
-    <artifactId>playwright</artifactId>
-    <version>1.58.1</version>  <!-- Match PLAYWRIGHT_VERSION -->
-</dependency>
-```
-
-### Remote Debugging (CDP)
-
-You can attach your local Chrome DevTools to a browser that the agent drives inside the container.
-
-#### The two gotchas
-
-To expose a working CDP endpoint, the browser must launch with **both** of these flags:
-
-| Flag | Why |
-|------|-----|
-| `--remote-debugging-port=9222` | Playwright launches Chromium with `--remote-debugging-pipe` by default, which exposes **no TCP port**. You must force a fixed port. |
-| `--remote-allow-origins=*` | Chrome 111+ returns **HTTP 403** on the DevTools WebSocket if the request origin isn't allow-listed. |
-
-**Binding to loopback is sufficient** — no `socat` or `0.0.0.0` bridge is needed. A forwarder that connects from inside the container's network namespace (VS Code Dev Containers port forwarding, `ssh -L`) reaches `127.0.0.1:9222` directly, and Chrome rewrites the debugger URL host to match the forwarded request.
-
-> If you instead publish the port with plain `docker run -p 9222:9222`, also add `--remote-debugging-address=0.0.0.0` so Chrome binds beyond loopback.
-
-#### How to launch with CDP enabled
-
-Hand this to your agent — it just needs to add the two flags wherever it launches the browser:
-
-- **Playwright Agent CLI** — put the flags in the config's `browser.launchOptions.args`:
-  ```json
-  { "browser": { "launchOptions": { "args": ["--remote-debugging-port=9222", "--remote-allow-origins=*"] } } }
-  ```
-  ```bash
-  playwright-cli open --config=cdp.config.json
-  ```
-
-- **Raw Playwright (Node/Java)** — pass them to the launch args:
-  ```js
-  await chromium.launch({ args: ['--remote-debugging-port=9222', '--remote-allow-origins=*'] });
-  ```
-
-#### Connect from your local Chrome
-
-1. Forward port 9222 to your machine. In VS Code Dev Containers this is automatic; otherwise tunnel from inside the container's namespace, e.g. `ssh -L 9222:localhost:9222 user@docker-host`.
-2. Open `chrome://inspect`, click **Configure…**, and add `localhost:9222`.
-3. The agent-controlled browser appears as a remote target.
-
-> **Note:** Earlier images relied on the Playwright MCP plus a `cdp-proxy-monitor` socat bridge. Both have been removed in favor of the Agent CLI and the fixed-port approach above.
-
-#### Security Note
-
-Remote debugging exposes browser internals. Only enable when needed and do not expose port 9222 to untrusted networks.
 
 ## Troubleshooting
 
