@@ -1,6 +1,7 @@
 # Coding Agent Development Container
 # Based on the official reference implementation with Java 21 support
-# Multi-stage build supporting base (Claude Code), opencode, and Docker-in-Docker variants
+# Multi-stage build supporting base (Claude Code), opencode, and their
+# Docker-in-Docker variants (dind, opencode-dind)
 
 ARG NODE_VERSION=22
 ARG VARIANT=base
@@ -126,31 +127,13 @@ RUN npm install -g playwright \
     && echo "#   <artifactId>playwright</artifactId>" >> /opt/playwright-browsers/VERSION \
     && echo "#   <version>${PLAYWRIGHT_VERSION}</version>" >> /opt/playwright-browsers/VERSION
 
-# Install Playwright MCP and its required browsers (newer version than standard Playwright)
-# This ensures Claude's MCP tools work without downloading browsers at runtime
-# The MCP typically requires a newer Playwright version with a different chromium build
-RUN npm install -g @playwright/mcp \
-    && MCP_PACKAGE_VERSION=$(npm list -g @playwright/mcp --json 2>/dev/null | jq -r '.dependencies["@playwright/mcp"].version // empty') \
-    && MCP_PW_VERSION=$(npm view @playwright/mcp dependencies.playwright 2>/dev/null || echo "") \
-    && if [ -n "$MCP_PW_VERSION" ]; then \
-         echo "Installing MCP Playwright browsers (version ${MCP_PW_VERSION})..." \
-         && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers npx playwright@${MCP_PW_VERSION} install --with-deps chromium \
-         && echo "" >> /opt/playwright-browsers/VERSION \
-         && echo "# MCP Playwright (for Claude's browser tools):" >> /opt/playwright-browsers/VERSION \
-         && echo "MCP_PACKAGE_VERSION=${MCP_PACKAGE_VERSION}" >> /opt/playwright-browsers/VERSION \
-         && echo "MCP_PLAYWRIGHT_VERSION=${MCP_PW_VERSION}" >> /opt/playwright-browsers/VERSION \
-         && echo "MCP_CHROMIUM_BUILD=$(ls -d /opt/playwright-browsers/chromium-* | tail -1 | xargs basename)" >> /opt/playwright-browsers/VERSION; \
-       else \
-         echo "Warning: Could not determine MCP Playwright version, skipping MCP browser install"; \
-       fi
-
 # Install the Playwright Agent CLI (@playwright/cli) and its required browser.
-# This is a lower-token, less-flaky alternative to the MCP server: coding agents
-# drive the browser with `playwright-cli` shell commands instead of MCP tool
-# calls (no tool schemas / snapshots held in context). It bundles its own, newer
-# playwright-core, so it needs its own chromium build pre-installed here to avoid
-# a runtime download (which the firewall would block). The agent-facing skill is
-# installed further down, once the node user's home directory exists.
+# Coding agents drive the browser with `playwright-cli` shell commands and concise
+# output (no tool schemas / page snapshots held in context), which is fast and
+# token-efficient. It bundles its own, newer playwright-core, so it needs its own
+# chromium build pre-installed here to avoid a runtime download (which the firewall
+# would block). The agent-facing skill is installed further down, once the node
+# user's home directory exists.
 RUN npm install -g @playwright/cli \
     && CLI_PACKAGE_VERSION=$(npm list -g @playwright/cli --json 2>/dev/null | jq -r '.dependencies["@playwright/cli"].version // empty') \
     && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers playwright-cli install-browser chromium --with-deps \
@@ -294,46 +277,14 @@ FROM base AS dind
 
 USER root
 
-# Install Docker CE
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl gnupg \
-    && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg | \
-       gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
-    && chmod a+r /etc/apt/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
-       tee /etc/apt/sources.list.d/docker.list > /dev/null \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-        docker-ce \
-        docker-ce-cli \
-        containerd.io \
-        docker-buildx-plugin \
-        docker-compose-plugin \
-    && rm -rf /var/lib/apt/lists/*
-
-# Configure Docker daemon
-RUN mkdir -p /etc/docker && cat > /etc/docker/daemon.json <<'EOF'
-{
-  "storage-driver": "overlay2",
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "10m",
-    "max-file": "3"
-  },
-  "features": {
-    "buildkit": true
-  }
-}
-EOF
+# Install Docker CE and configure the daemon (shared with opencode-dind).
+COPY install-docker.sh /usr/local/bin/install-docker.sh
+RUN chmod +x /usr/local/bin/install-docker.sh && /usr/local/bin/install-docker.sh
 
 # Add node user to docker group
 RUN usermod -aG docker node
 
-# Create Docker data directory
-RUN mkdir -p /var/lib/docker /var/log && chmod 755 /var/lib/docker
-
-# Copy scripts (including new DinD entrypoint)
+# Copy scripts (including the DinD entrypoint)
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
@@ -351,6 +302,35 @@ RUN chmod +x /usr/local/bin/init-firewall.sh \
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
+WORKDIR /workspace
+USER node
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-dind.sh"]
+CMD ["/bin/zsh"]
+
+# ========================================
+# OPENCODE-DIND STAGE (OpenCode + Docker-in-Docker)
+# ========================================
+# Same Docker-in-Docker setup as the `dind` stage, but on top of the OpenCode
+# agent instead of Claude Code. The DinD entrypoint is agent-agnostic: it starts
+# dockerd, then execs /usr/local/bin/entrypoint.sh — which the opencode stage
+# already installed as the OpenCode entrypoint.
+FROM opencode AS opencode-dind
+
+USER root
+
+# Install Docker CE and configure the daemon (shared with dind).
+COPY install-docker.sh /usr/local/bin/install-docker.sh
+RUN chmod +x /usr/local/bin/install-docker.sh && /usr/local/bin/install-docker.sh
+
+# Add node user to docker group
+RUN usermod -aG docker node
+
+# Copy the DinD entrypoint (other scripts were installed by the opencode stage,
+# whose entrypoint-opencode.sh already lives at /usr/local/bin/entrypoint.sh).
+COPY entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
+RUN chmod +x /usr/local/bin/entrypoint-dind.sh
+
 WORKDIR /workspace
 USER node
 
