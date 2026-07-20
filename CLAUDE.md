@@ -15,7 +15,7 @@ This repository contains a Docker container setup for running AI coding agents (
 
 ## Build Variants
 
-The Dockerfile uses a multi-stage build with four targets:
+The Dockerfile uses a multi-stage build with five targets (`base-common` → `base`/`opencode`, then `dind` (from `base`) and `opencode-dind` (from `opencode`)):
 
 | Service (docker-compose) | Target | Description |
 |---|---|---|
@@ -23,6 +23,7 @@ The Dockerfile uses a multi-stage build with four targets:
 | `claude-dind` | `dind` | Claude Code + Docker-in-Docker (privileged) |
 | `claude-docker-host` | `dind` | Claude Code + host Docker socket mounted |
 | `opencode` | `opencode` | OpenCode (sst/opencode), no Docker daemon |
+| `opencode-dind` | `opencode-dind` | OpenCode + Docker-in-Docker (privileged) |
 
 ## Build & Run Commands
 
@@ -32,6 +33,7 @@ docker-compose up claude              # base variant
 docker-compose up claude-dind         # Docker-in-Docker
 docker-compose up claude-docker-host  # host Docker socket
 docker-compose up opencode            # OpenCode variant
+docker-compose up opencode-dind       # OpenCode + Docker-in-Docker
 
 # Build without running
 docker-compose build claude
@@ -52,6 +54,7 @@ devcontainer exec --workspace-folder . bash
 The default `devcontainer.json` uses the `base` variant. Alternative configs:
 - `.devcontainer/devcontainer-dind.json` — Docker-in-Docker variant
 - `.devcontainer/devcontainer-opencode.json` — OpenCode variant
+- `.devcontainer/devcontainer-opencode-dind.json` — OpenCode + Docker-in-Docker variant
 
 ## Configuration
 
@@ -81,29 +84,32 @@ The devcontainer additionally uses `.devcontainer/devcontainer.env` (gitignored)
 
 ```
 .devcontainer/
-  Dockerfile              # Multi-stage build (base-common → base/dind/opencode)
+  Dockerfile              # Multi-stage build (base-common → base/opencode → dind/opencode-dind)
   devcontainer.json       # VS Code dev container config (base variant)
   devcontainer-dind.json  # VS Code dev container config (DinD variant)
   devcontainer-opencode.json  # VS Code dev container config (OpenCode variant)
+  devcontainer-opencode-dind.json  # VS Code dev container config (OpenCode DinD variant)
   entrypoint.sh           # Container entrypoint (base/dind)
   entrypoint-opencode.sh  # Container entrypoint (opencode)
   entrypoint-dind.sh      # Docker daemon startup (dind)
+  install-docker.sh       # Install Docker CE; shared by all DinD build stages
   init-firewall.sh        # iptables firewall setup (runs at postStart)
   allowed-domains.conf    # Allowlist for outbound network access
   playwright-info.sh      # Helper script: show installed Playwright versions
   statusline-command.sh   # Claude Code status line (model + progress bar + context %)
   claude-language-policy.md  # Global CLAUDE.md policy: German chat, English code/docs
-docker-compose.yml        # All four service variants
+docker-compose.yml        # All five service variants
 .env.example              # Environment variable template
 ```
 
 ## Playwright Setup
 
-Three Playwright installations coexist in the image (all browsers pre-installed at `/opt/playwright-browsers`):
+Two Playwright installations coexist in the image (all browsers pre-installed at `/opt/playwright-browsers`):
 
 1. **`playwright` (npm global)** — for Java Playwright integration tests
-2. **`@playwright/mcp` (npm global)** — Claude's MCP browser tools
-3. **`@playwright/cli` (npm global, `playwright-cli`)** — lower-token agent browser automation via shell commands
+2. **`@playwright/cli` (npm global, `playwright-cli`)** — lower-token agent browser automation via shell commands; also installs the `claude` browser skills into `~/.claude/skills`
+
+(The deprecated `@playwright/mcp` was removed from the image.)
 
 Run `playwright-info` inside the container to see installed versions and Chromium build IDs.
 
