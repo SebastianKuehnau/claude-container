@@ -36,6 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim \
     wget \
     zsh \
+    zip \
+    unzip \
     screen \
     htop \
     # Firewall tools

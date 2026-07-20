@@ -222,6 +222,77 @@ If you had the folder open in VS Code, it should have already prompted you that 
 
 Read what the `entrypoint.sh` command tells you about versions if wou want to use built-in predownloaded browers, the Playwright Agent CLI etc. Or don't... you can re-run the entrypoint inside the container terminal by just typing `entrypoint.sh` to get to the info later also (should be fine to rerun). To update claude run `sudo claude update` as new versions are being pushed constantly... 
 
+# TL;DR — claude-task: one command, per-branch containers, zero setup
+
+`claude-task` wraps everything above into a single script: per-branch git
+worktrees, containerized Claude Code sessions, and (for projects that opt
+in via `--init`) a project-specific Java/build-tool image plus a
+worktree-shared Maven cache. No clone of this repository required to
+install it.
+
+## Install
+
+```bash
+LATEST_TAG=$(curl -fsSL https://api.github.com/repos/SebastianKuehnau/claude-container/releases/latest \
+  | grep -m1 '"tag_name"' | cut -d'"' -f4)
+curl -fsSL -o ~/.local/bin/claude-task \
+  "https://raw.githubusercontent.com/SebastianKuehnau/claude-container/${LATEST_TAG}/bin/claude-task"
+chmod +x ~/.local/bin/claude-task
+```
+
+Make sure `~/.local/bin` is on your `PATH` (it isn't by default on macOS
+zsh):
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
+```
+
+Update later with `claude-task --update` (re-resolves the latest release
+and replaces the installed script in place).
+
+## New project
+
+Run once, inside any project's git repository:
+```bash
+claude-task --init
+```
+
+Five quick questions (Enter accepts the default):
+
+| Question | Default | Choices |
+|---|---|---|
+| Java version | 25 | 17 / 21 / 25 |
+| Java vendor | temurin | temurin / corretto / zulu |
+| Build tool | maven | maven / gradle / none |
+| Container variant | base | base / dind / opencode |
+| Firewall profile | allowlist | allowlist (seeded starter list) / open |
+
+...then optional picks for MCP servers (github / context7 / filesystem)
+and any `plugin@marketplace` references.
+
+`--init` stages (never commits) `.devcontainer/claude-task.json`, a
+generated `.devcontainer/claude-task.Dockerfile` (`FROM` the published base
+image + a SDKMAN layer for your Java/build-tool choices),
+`.devcontainer/devcontainer.json`, `.devcontainer/allowed-domains.conf`
+(only if `allowlist`), `.mcp.json`, `.claude/settings.json`, `CLAUDE.md`,
+`tasks/`, and two `.gitignore` entries. Review with `git status` /
+`git diff --cached`, then commit yourself. Re-running `--init` on an
+already-initialized project refuses to touch anything unless you pass
+`--force` — and even then, `CLAUDE.md` / `.claude/settings.json` are only
+written once and never overwritten.
+
+Daily use after that:
+```bash
+claude-task <branch>          # start/attach a session (own git worktree + container)
+claude-task --plan <branch>   # same, but start Claude explicitly in plan mode
+claude-task --shell <branch>  # debug shell instead of Claude
+claude-task --done <branch>   # stop the container, remove the worktree
+                               # (refuses if there's uncommitted/unpushed work)
+```
+
+Projects that never ran `--init` keep exactly today's behavior — global
+image, global Maven cache, zero regression. Full workflow and design
+rationale: [docs/working-with-tasks.md](docs/working-with-tasks.md).
+
 ## Separate devcontainer and workspaces
 
 ```

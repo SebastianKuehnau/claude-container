@@ -1,0 +1,823 @@
+#!/usr/bin/env bash
+# claude-task — per-branch, containerized Claude Code sessions via git worktrees.
+#
+# Usage:
+#   claude-task <branch>       Start (or attach to) a Claude Code session for <branch>.
+#   claude-task --plan <branch>    Same, but start Claude explicitly in plan mode.
+#   claude-task --shell <branch>   Open a zsh debug shell instead of Claude.
+#   claude-task --done <branch>    Stop the container and clean up the worktree.
+#   claude-task --init [--force]   Scaffold a project-specific container config.
+#   claude-task --update           Self-update to the latest release.
+#
+# See docs/working-with-tasks.md for the full workflow.
+
+set -euo pipefail
+
+CLAUDE_TASK_VERSION="0.1.0"
+GITHUB_REPO="SebastianKuehnau/claude-container"
+GHCR_IMAGE="ghcr.io/sebastiankuehnau/claude-container"
+
+# Global (account-scoped, never project-scoped) state — matches today's
+# docker-compose.yml / devcontainer.json bind mounts exactly.
+GLOBAL_CLAUDE_DIR="${HOME}/.claude-container/claude"
+GLOBAL_CLAUDE_JSON="${HOME}/.claude-container/claude.json"
+GLOBAL_M2_CACHE="${HOME}/.claude-m2-cache"
+
+info() { printf '%s\n' "$*" >&2; }
+err()  { printf 'Error: %s\n' "$*" >&2; }
+die()  { err "$*"; exit 1; }
+
+usage() {
+  cat <<'EOF'
+claude-task — per-branch, containerized Claude Code sessions via git worktrees.
+
+Usage:
+  claude-task <branch>            Start (or attach to) a session for <branch>.
+  claude-task --plan <branch>     Same, but start Claude explicitly in plan mode.
+  claude-task --shell <branch>    Open a zsh debug shell instead of Claude.
+  claude-task --done <branch>     Stop the container and clean up the worktree.
+  claude-task --init [--force]    Scaffold a project-specific container config.
+  claude-task --update            Self-update to the latest release.
+  claude-task --help              Show this help.
+
+Modifiers (pass after the branch/subcommand):
+  --force     --init: overwrite an existing config. --done: skip the
+              uncommitted/unpushed-work safety check.
+  --rebuild   Force a project image rebuild even if the config hash matches.
+EOF
+}
+
+# --- Git worktree / project identity -----------------------------------
+
+require_git_repo() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "Not inside a git repository."
+}
+
+# Resolves the MAIN repo's working-tree root, even when invoked from inside
+# a linked worktree. --git-common-dir (unlike --git-dir) always points at the
+# shared .git directory; from a worktree, --git-dir would instead return the
+# per-worktree .git/worktrees/<name> path, which is the wrong anchor for
+# cache/image identity that must be shared across all worktrees of a project.
+resolve_main_repo_root() {
+  local common_dir
+  common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+    || die "Could not resolve the git common directory."
+  if [[ "$(basename "$common_dir")" == ".git" ]]; then
+    dirname "$common_dir"
+  else
+    # Bare-repo layout: the common dir *is* the project root, no .git to strip.
+    printf '%s\n' "$common_dir"
+  fi
+}
+
+# Docker container/tag names allow only [a-zA-Z0-9][a-zA-Z0-9_.-]*, no slashes.
+# Lowercase everything and collapse disallowed runs to a single '-'.
+sanitize() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9._-]+/-/g; s/^[-.]+//; s/-+$//'
+}
+
+project_name() {
+  local root="$1" name
+  name="$(basename "$root")"
+  name="${name%.git}"
+  sanitize "$name"
+}
+
+worktree_path() {
+  local main_repo_root="$1" branch="$2"
+  local base
+  base="$(dirname "$main_repo_root")/$(basename "$main_repo_root")-worktrees"
+  printf '%s/%s\n' "$base" "$branch"
+}
+
+worktree_exists() {
+  local main_repo_root="$1" path="$2"
+  git -C "$main_repo_root" worktree list --porcelain \
+    | awk -v p="$path" '$1=="worktree" && $2==p { found=1 } END { exit !found }'
+}
+
+find_or_create_worktree() {
+  local main_repo_root="$1" branch="$2"
+  local path
+  path="$(worktree_path "$main_repo_root" "$branch")"
+
+  if worktree_exists "$main_repo_root" "$path"; then
+    printf '%s\n' "$path"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$path")"
+
+  if git -C "$main_repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
+    info "Adding worktree for existing local branch '$branch'..."
+    git -C "$main_repo_root" worktree add "$path" "$branch" >&2
+  elif git -C "$main_repo_root" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    info "Adding worktree tracking 'origin/$branch'..."
+    git -C "$main_repo_root" worktree add --track -b "$branch" "$path" "origin/$branch" >&2
+  else
+    info "Adding worktree on new branch '$branch' (off current HEAD)..."
+    git -C "$main_repo_root" worktree add -b "$branch" "$path" >&2
+  fi
+
+  printf '%s\n' "$path"
+}
+
+# --- Project config ------------------------------------------------------
+
+config_path() {
+  printf '%s/.devcontainer/claude-task.json\n' "$1"
+}
+
+has_project_config() {
+  [[ -f "$(config_path "$1")" ]]
+}
+
+cfg_get() {
+  local cfg="$1" filter="$2" default="$3"
+  jq -r "${filter} // \"${default}\"" "$cfg"
+}
+
+# --- Image build / naming ------------------------------------------------
+
+image_tag_for_project() {
+  printf 'claude-task-%s:latest\n' "$1"
+}
+
+container_name_for() {
+  local project="$1" branch="$2"
+  printf 'claude-%s-%s\n' "$project" "$(sanitize "$branch")"
+}
+
+config_hash() {
+  sha256sum "$1" | cut -c1-12
+}
+
+needs_rebuild() {
+  local image_tag="$1" dockerfile="$2" want have
+  want=$(config_hash "$dockerfile")
+  have=$(docker image inspect --format '{{ index .Config.Labels "com.claude-task.config-hash" }}' "$image_tag" 2>/dev/null) || return 0
+  [[ "$have" != "$want" ]]
+}
+
+build_project_image() {
+  local worktree="$1" image_tag="$2" force_rebuild="$3"
+  local dockerfile="$worktree/.devcontainer/claude-task.Dockerfile"
+  [[ -f "$dockerfile" ]] || die "Missing $dockerfile — run 'claude-task --init' first."
+
+  if [[ "$force_rebuild" == 1 ]] || needs_rebuild "$image_tag" "$dockerfile"; then
+    info "Building project image '$image_tag'..."
+    local pull_flags=()
+    [[ "$force_rebuild" == 1 ]] && pull_flags=(--pull --no-cache)
+    docker build "${pull_flags[@]}" \
+      -f "$dockerfile" \
+      -t "$image_tag" \
+      --label "com.claude-task.config-hash=$(config_hash "$dockerfile")" \
+      "$worktree/.devcontainer" >&2
+  else
+    info "Project image '$image_tag' is up to date."
+  fi
+}
+
+# Global (unconfigured-project) fallback: reproduces today's docker-compose/
+# devcontainer.json behavior exactly — no regression for projects that never
+# ran --init. Builds locally only when invoked from inside claude-container
+# itself; otherwise pulls the published image so no clone is required.
+ensure_global_image() {
+  local main_repo_root="$1"
+  if [[ -f "$main_repo_root/.devcontainer/Dockerfile" ]]; then
+    info "Building base image 'claude-container:latest' from local Dockerfile..."
+    docker build \
+      -f "$main_repo_root/.devcontainer/Dockerfile" \
+      --target base \
+      --build-arg "JAVA_VERSION=${JAVA_VERSION:-25}" \
+      --build-arg "JAVA_VENDOR=${JAVA_VENDOR:-temurin}" \
+      -t claude-container:latest \
+      "$main_repo_root/.devcontainer" >&2
+    printf 'claude-container:latest\n'
+  else
+    info "Pulling '${GHCR_IMAGE}:latest'..."
+    docker pull "${GHCR_IMAGE}:latest" >&2
+    printf '%s:latest\n' "$GHCR_IMAGE"
+  fi
+}
+
+# --- Container run --------------------------------------------------------
+
+# Builds the `docker run` argument array for a session. Echoes nothing;
+# populates the RUN_ARGS array in the caller's scope.
+build_run_args() {
+  local worktree="$1" image_tag="$2" container_name="$3" cache_dir="$4" firewall="$5" main_repo_root="$6"
+
+  RUN_ARGS=(
+    run -it --rm
+    --name "$container_name"
+    --cap-add=NET_ADMIN --cap-add=NET_RAW
+    -v "${GLOBAL_CLAUDE_DIR}:/home/node/.claude:cached"
+    -v "${GLOBAL_CLAUDE_JSON}:/home/node/.claude.json"
+    -v "${cache_dir}:/home/node/.m2/repository:cached"
+    -v "${worktree}:/workspace:delegated"
+    -e "TZ=${TZ:-Europe/Helsinki}"
+    -e "GH_TOKEN=${GH_TOKEN:-}"
+    -e "GIT_USER_NAME=${GIT_USER_NAME:-}"
+    -e "GIT_USER_EMAIL=${GIT_USER_EMAIL:-}"
+    -e "NODE_OPTIONS=--max-old-space-size=4096"
+    -e "CLAUDE_CONFIG_DIR=/home/node/.claude"
+    -e "DEVCONTAINER=true"
+    -e "VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}"
+    -e "NOTIFICATION_URL=${NOTIFICATION_URL:-}"
+    -p "9222:9222"
+    -w /workspace
+  )
+
+  # A git worktree's /workspace/.git is a FILE, not a directory: it points (by
+  # absolute host path) into the main repo's .git/worktrees/<name>, and that
+  # metadir's `commondir` points back up to the main repo's .git. Neither lives
+  # under the worktree, so mounting only the worktree leaves git unable to
+  # resolve its git dir ("fatal: not a git repository"). Mount the main repo's
+  # .git at the SAME absolute path it has on the host so both the `gitdir:`
+  # pointer and `commondir` resolve unchanged inside the container.
+  local main_git_dir="${main_repo_root}/.git"
+  if [[ -d "$main_git_dir" ]]; then
+    RUN_ARGS+=(-v "${main_git_dir}:${main_git_dir}:cached")
+  fi
+
+  if [[ "$firewall" == "open" ]]; then
+    RUN_ARGS+=(-e "SKIP_FIREWALL=1")
+  fi
+}
+
+running_container() {
+  docker ps --format '{{.Names}}' | grep -qx "$1"
+}
+
+cmd_start() {
+  local mode="$1"; shift
+  local branch="" rebuild=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --rebuild) rebuild=1 ;;
+      --*) die "Unknown flag for this command: $1" ;;
+      *) branch="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$branch" ]] || die "Usage: claude-task [--plan|--shell] <branch>"
+
+  require_git_repo
+  local main_repo_root project worktree
+  main_repo_root="$(resolve_main_repo_root)"
+  project="$(project_name "$main_repo_root")"
+  worktree="$(find_or_create_worktree "$main_repo_root" "$branch")"
+
+  local image_tag cache_dir firewall container_name
+  container_name="$(container_name_for "$project" "$branch")"
+
+  if has_project_config "$worktree"; then
+    local cfg; cfg="$(config_path "$worktree")"
+    firewall="$(cfg_get "$cfg" '.firewall' 'allowlist')"
+    image_tag="$(image_tag_for_project "$project")"
+    cache_dir="${main_repo_root}/.devcontainer/m2-cache"
+    mkdir -p "$cache_dir"
+    build_project_image "$worktree" "$image_tag" "$rebuild"
+  else
+    firewall="allowlist"
+    image_tag="$(ensure_global_image "$main_repo_root")"
+    cache_dir="$GLOBAL_M2_CACHE"
+    mkdir -p "$cache_dir"
+  fi
+
+  # Reuse a live container for --shell (attach a second terminal alongside
+  # a running Claude session); other modes always start a fresh, --rm'd run.
+  if [[ "$mode" == "shell" ]] && running_container "$container_name"; then
+    info "Attaching zsh shell to running container '$container_name'..."
+    exec docker exec -it "$container_name" /bin/zsh
+  fi
+
+  if running_container "$container_name"; then
+    die "Container '$container_name' is already running. Use 'claude-task --shell $branch' to attach, or 'claude-task --done $branch' to stop it first."
+  fi
+
+  local -a RUN_ARGS
+  build_run_args "$worktree" "$image_tag" "$container_name" "$cache_dir" "$firewall" "$main_repo_root"
+
+  case "$mode" in
+    claude) RUN_ARGS+=("$image_tag" claude) ;;
+    plan)   RUN_ARGS+=("$image_tag" claude --permission-mode plan) ;;
+    shell)  RUN_ARGS+=("$image_tag" /bin/zsh) ;;
+    *) die "Internal error: unknown mode '$mode'" ;;
+  esac
+
+  info "Starting container '$container_name' (image: $image_tag, mode: $mode)..."
+  exec docker "${RUN_ARGS[@]}"
+}
+
+cmd_done() {
+  local branch="" force=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=1 ;;
+      --*) die "Unknown flag for this command: $1" ;;
+      *) branch="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$branch" ]] || die "Usage: claude-task --done <branch>"
+
+  require_git_repo
+  local main_repo_root project worktree container_name
+  main_repo_root="$(resolve_main_repo_root)"
+  project="$(project_name "$main_repo_root")"
+  worktree="$(worktree_path "$main_repo_root" "$branch")"
+  container_name="$(container_name_for "$project" "$branch")"
+
+  if ! worktree_exists "$main_repo_root" "$worktree"; then
+    die "No worktree found for branch '$branch' at $worktree"
+  fi
+
+  if [[ "$force" != 1 ]]; then
+    local dirty upstream unpushed
+    dirty="$(git -C "$worktree" status --porcelain)"
+    if [[ -n "$dirty" ]]; then
+      die "Worktree has uncommitted changes — commit, stash, or discard them first (or re-run with --force to remove anyway):
+  $worktree"
+    fi
+    if upstream="$(git -C "$worktree" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"; then
+      unpushed="$(git -C "$worktree" log "${upstream}.." --oneline)"
+      if [[ -n "$unpushed" ]]; then
+        die "Worktree has commits not pushed to '$upstream' — push them or open a PR first (or re-run with --force):
+  $worktree"
+      fi
+    else
+      info "Branch '$branch' has no upstream — skipping push check (commits, if any, only exist locally in this worktree)."
+    fi
+  fi
+
+  if docker ps -a --format '{{.Names}}' | grep -qx "$container_name"; then
+    info "Removing container '$container_name'..."
+    docker rm -f "$container_name" >/dev/null
+  fi
+
+  info "Removing worktree '$worktree'..."
+  git -C "$main_repo_root" worktree remove --force "$worktree"
+  info "Done. Branch '$branch' itself was left intact — delete it manually if no longer needed."
+}
+
+# --- --init scaffolding ---------------------------------------------------
+#
+# claude-task is distributed as a single standalone file (curl'd into
+# ~/.local/bin — see cmd_update), so every template it writes must be
+# embedded here rather than read from a sibling file in this repo: a target
+# project on a fresh machine never has claude-container cloned.
+
+sed_escape_replacement() {
+  printf '%s' "$1" | sed -e 's/[\&|]/\\&/g'
+}
+
+ask_choice() {
+  local prompt="$1" default="$2" allowed="$3" var
+  read -rp "$prompt [$default]: " var
+  var="${var:-$default}"
+  if [[ ",$allowed," != *",$var,"* ]]; then
+    info "Unrecognized value '$var' — using default '$default'."
+    var="$default"
+  fi
+  printf '%s\n' "$var"
+}
+
+# Renders .devcontainer/claude-task.Dockerfile: FROM the published GHCR base
+# image + a SDKMAN layer for the Java version/vendor override and build-tool
+# install (Maven/Gradle aren't in the base image at all). The SDKMAN
+# candidate id (e.g. 21.0.5-tem) is resolved at `docker build` time via
+# `sdk list java`, not hardcoded here — candidate ids drift with patch
+# releases. NOTE: this resolution mechanism has not been verified against
+# real SDKMAN output (no Docker/SDKMAN in the sandbox this was written in) —
+# verify on first real project image build (see the host verification
+# checklist).
+render_dockerfile() {
+  local path="$1" variant="$2" java_version="$3" java_vendor="$4" build_tool="$5"
+  local suffix vendor_tag build_tool_line
+
+  case "$variant" in
+    dind) suffix="-dind" ;;
+    opencode) suffix="-opencode" ;;
+    *) suffix="" ;;
+  esac
+
+  case "$java_vendor" in
+    temurin) vendor_tag="tem" ;;
+    corretto) vendor_tag="amzn" ;;
+    zulu) vendor_tag="zulu" ;;
+    *) die "Unknown Java vendor: $java_vendor" ;;
+  esac
+
+  case "$build_tool" in
+    maven)  build_tool_line="RUN bash -lc 'source \"\$SDKMAN_DIR/bin/sdkman-init.sh\" && sdk install maven'" ;;
+    gradle) build_tool_line="RUN bash -lc 'source \"\$SDKMAN_DIR/bin/sdkman-init.sh\" && sdk install gradle'" ;;
+    none)   build_tool_line="# No build tool requested (buildTool: none in claude-task.json)" ;;
+    *) die "Unknown build tool: $build_tool" ;;
+  esac
+
+  sed \
+    -e "s|__GHCR_IMAGE__|$(sed_escape_replacement "$GHCR_IMAGE")|g" \
+    -e "s|__SUFFIX__|$(sed_escape_replacement "$suffix")|g" \
+    -e "s|__JAVA_VERSION__|$(sed_escape_replacement "$java_version")|g" \
+    -e "s|__VENDOR_TAG__|$(sed_escape_replacement "$vendor_tag")|g" \
+    -e "s|__BUILD_TOOL_LINE__|$(sed_escape_replacement "$build_tool_line")|g" \
+    > "$path" <<'DOCKERFILE_EOF'
+# Generated by `claude-task --init` — do not hand-edit.
+# Re-run `claude-task --init --force` to regenerate from .devcontainer/claude-task.json.
+FROM __GHCR_IMAGE____SUFFIX__:latest
+
+USER root
+
+# SDKMAN: single mechanism for the Java-version/vendor override and the
+# build-tool install (Maven/Gradle aren't in the base image at all).
+# - zip/unzip are SDKMAN hard dependencies and are NOT in the base image.
+# - SDKMAN_DIR must be exported BEFORE the installer runs; otherwise the
+#   installer (running as root) writes to /root/.sdkman and the later
+#   sdkman-init.sh lookups under /home/node/.sdkman miss.
+RUN apt-get update && apt-get install -y --no-install-recommends zip unzip \
+    && rm -rf /var/lib/apt/lists/*
+ENV SDKMAN_DIR=/home/node/.sdkman
+RUN curl -s "https://get.sdkman.io" | bash
+RUN bash -lc 'source "$SDKMAN_DIR/bin/sdkman-init.sh" \
+    && CANDIDATE=$(sdk list java 2>/dev/null | grep -oE "__JAVA_VERSION__\.[0-9.]+-__VENDOR_TAG__" | head -1) \
+    && if [ -z "$CANDIDATE" ]; then echo "No SDKMAN candidate found for __JAVA_VERSION__-__VENDOR_TAG__" >&2; exit 1; fi \
+    && sdk install java "$CANDIDATE"'
+__BUILD_TOOL_LINE__
+# SDKMAN was installed as root; hand the tree to the node user so the final
+# runtime user can use `sdk` and the installed candidates.
+RUN chown -R node:node /home/node/.sdkman
+ENV JAVA_HOME=/home/node/.sdkman/candidates/java/current
+ENV PATH="${JAVA_HOME}/bin:/home/node/.sdkman/candidates/maven/current/bin:/home/node/.sdkman/candidates/gradle/current/bin:${PATH}"
+# MAVEN_OPTS file-locking is inherited from the base image — do not override.
+
+USER node
+DOCKERFILE_EOF
+}
+
+# IDE-facing only (VS Code / IntelliJ Gateway dev-container attach) —
+# claude-task itself always drives `docker build`/`docker run` directly and
+# never shells out to `devcontainer up`.
+write_devcontainer_json() {
+  cat > "$1" <<'EOF'
+{
+  "name": "claude-task project container",
+  "build": {
+    "dockerfile": "claude-task.Dockerfile"
+  },
+  "mounts": [
+    "source=${localEnv:HOME}/.claude-container/claude,target=/home/node/.claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.claude-container/claude.json,target=/home/node/.claude.json,type=bind,consistency=cached",
+    "source=${localWorkspaceFolder}/.devcontainer/m2-cache,target=/home/node/.m2/repository,type=bind,consistency=cached"
+  ],
+  "remoteUser": "node",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+  "postCreateCommand": "sudo chown -R node:node /home/node/.claude /home/node/.claude.json /home/node/.m2",
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh"
+}
+EOF
+}
+
+# Trimmed starter allowlist, seeded from this repo's own
+# .devcontainer/allowed-domains.conf. init-firewall.sh (baked into the base
+# image) already reads /workspace/.devcontainer/allowed-domains.conf by
+# default, so no per-project firewall script is needed — only this file.
+write_allowed_domains() {
+  local build_tool="$2"
+  cat > "$1" <<'EOF'
+# Claude Code Allowed Domains — seeded by `claude-task --init`.
+# Add domains here to whitelist them through the firewall.
+# Run 'firewall-reload' inside the container after editing this file.
+
+# Core Claude Code domains (required)
+api.anthropic.com
+claude.ai
+downloads.claude.ai
+sentry.io
+statsig.anthropic.com
+statsig.com
+
+# NPM registry (required for npm packages)
+registry.npmjs.org
+
+# GitHub (required for gh CLI and git operations)
+api.github.com
+github.com
+objects.githubusercontent.com
+raw.githubusercontent.com
+codeload.github.com
+
+# Java build tools
+repo1.maven.org
+repo.maven.apache.org
+get.sdkman.io
+api.sdkman.io
+EOF
+  if [[ "$build_tool" == "gradle" ]]; then
+    cat >> "$1" <<'EOF'
+plugins.gradle.org
+services.gradle.org
+downloads.gradle-dn.com
+EOF
+  fi
+  cat >> "$1" <<'EOF'
+
+# Vaadin (uncomment maven/tools/cdn if using commercial components)
+mcp.vaadin.com
+vaadin.com
+
+# Javadoc MCP (www.javadocs.dev/mcp) — Java library docs via MCP
+javadocs.dev
+www.javadocs.dev
+
+# Custom domains (add your own below)
+EOF
+}
+
+# Curated MCP server definitions. Kept small and grounded in currently
+# documented/maintained servers only — no invented package names.
+mcp_server_json() {
+  case "$1" in
+    github)
+      cat <<'EOF'
+{"type":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-github"],"env":{"GITHUB_PERSONAL_ACCESS_TOKEN":"<YOUR_TOKEN>"}}
+EOF
+      ;;
+    context7)
+      cat <<'EOF'
+{"type":"http","url":"https://mcp.context7.com/mcp"}
+EOF
+      ;;
+    filesystem)
+      cat <<'EOF'
+{"type":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/workspace"]}
+EOF
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Merges the chosen curated servers into .mcp.json without clobbering any
+# servers a user already hand-added on a re-run.
+write_mcp_json() {
+  local path="$1" mcp_csv="$2" merged name def
+  merged='{"mcpServers": {}}'
+  [[ -f "$path" ]] && merged="$(cat "$path")"
+
+  IFS=',' read -ra names <<< "$mcp_csv"
+  for name in "${names[@]}"; do
+    name="$(printf '%s' "$name" | xargs)"
+    [[ -z "$name" ]] && continue
+    if def="$(mcp_server_json "$name")"; then
+      merged=$(jq --arg n "$name" --argjson d "$def" '.mcpServers[$n] = $d' <<< "$merged")
+    else
+      info "Skipping unknown MCP server '$name' (curated list: github, context7, filesystem)."
+    fi
+  done
+
+  jq . <<< "$merged" > "$path"
+}
+
+# Only written when it doesn't already exist — never overwrites a project's
+# hand-edited settings, even under --init --force.
+write_claude_settings() {
+  local path="$1" plugins_csv="$2" enabled marketplaces name mp
+
+  if [[ -f "$path" ]]; then
+    info "$path already exists — leaving it untouched (add plugins/permissions manually if needed)."
+    return 0
+  fi
+
+  enabled='{}'
+  marketplaces='{}'
+  IFS=',' read -ra names <<< "$plugins_csv"
+  for name in "${names[@]}"; do
+    name="$(printf '%s' "$name" | xargs)"
+    [[ -z "$name" ]] && continue
+    enabled=$(jq --arg k "$name" '. + {($k): true}' <<< "$enabled")
+    mp="${name#*@}"
+    if [[ "$mp" == "vaadin-marketplace" ]]; then
+      marketplaces=$(jq '. + {"vaadin-marketplace": {"source": {"source": "github", "repo": "vaadin/agent-marketplace"}}}' <<< "$marketplaces")
+    elif [[ "$mp" != "$name" ]]; then
+      info "Plugin '$name' references marketplace '$mp' — add it to extraKnownMarketplaces in $path manually if it isn't already known."
+    fi
+  done
+
+  jq -n --argjson enabled "$enabled" --argjson mps "$marketplaces" '{
+    permissions: {
+      deny: [
+        "Bash(rm -rf *)",
+        "Bash(rm -rf /)",
+        "Bash(curl * | *sh*)",
+        "Bash(wget * | *sh*)"
+      ]
+    },
+    enabledPlugins: $enabled,
+    extraKnownMarketplaces: $mps
+  }' > "$path"
+}
+
+# Only written when it doesn't already exist.
+write_claude_md_skeleton() {
+  local path="$1" project="$2" build_tool="$3"
+  if [[ -f "$path" ]]; then
+    info "$path already exists — leaving it untouched."
+    return 0
+  fi
+  cat > "$path" <<EOF
+# CLAUDE.md
+
+This file provides guidance to Claude Code when working in this repository.
+
+## Project: ${project}
+
+- Build tool: ${build_tool}
+- Container config: see .devcontainer/claude-task.json (managed by \`claude-task --init\`)
+
+<!-- Add project-specific conventions, architecture notes, and commands below. -->
+EOF
+}
+
+ensure_gitignore_entries() {
+  local gi="$1/.gitignore" entry
+  touch "$gi"
+  for entry in ".devcontainer/m2-cache/" ".devcontainer/devcontainer.env"; do
+    grep -qxF "$entry" "$gi" || printf '%s\n' "$entry" >> "$gi"
+  done
+}
+
+cmd_init() {
+  local force=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --force) force=1 ;;
+      *) die "Unknown argument for --init: $arg" ;;
+    esac
+  done
+
+  require_git_repo
+  local project_dir cfg
+  project_dir="$(git rev-parse --show-toplevel)"
+  cfg="$(config_path "$project_dir")"
+
+  if [[ -f "$cfg" && "$force" != 1 ]]; then
+    err "Project already initialized: $cfg"
+    info "Current config:"
+    cat "$cfg" >&2
+    info "Re-run with --force to regenerate the machine-owned files (config, Dockerfile, devcontainer.json, allowlist)."
+    exit 1
+  fi
+
+  echo "claude-task --init — answer a few questions (Enter accepts the default)."
+  echo
+
+  local java_version java_vendor build_tool variant firewall mcp_csv plugins_csv
+  java_version="$(ask_choice 'Java version' '25' '17,21,25')"
+  java_vendor="$(ask_choice 'Java vendor' 'temurin' 'temurin,corretto,zulu')"
+  build_tool="$(ask_choice 'Build tool' 'maven' 'maven,gradle,none')"
+  variant="$(ask_choice 'Container variant' 'base' 'base,dind,opencode')"
+  firewall="$(ask_choice 'Firewall profile' 'allowlist' 'open,allowlist')"
+
+  echo
+  echo "MCP servers — comma-separated, from: github, context7, filesystem (blank for none)"
+  read -rp "MCP servers []: " mcp_csv
+
+  echo
+  echo "Plugins — comma-separated 'plugin@marketplace' refs (blank for none)."
+  echo "  vaadin-skills@vaadin-marketplace is already available image-wide — no need to list it."
+  read -rp "Plugins []: " plugins_csv
+
+  mkdir -p "$project_dir/.devcontainer" "$project_dir/.claude" "$project_dir/tasks"
+
+  local project_name_val
+  project_name_val="$(basename "$project_dir")"
+
+  jq -n \
+    --arg jv "$java_version" --arg vendor "$java_vendor" --arg bt "$build_tool" \
+    --arg variant "$variant" --arg fw "$firewall" \
+    --argjson mcp "$(printf '%s' "$mcp_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
+    --argjson plugins "$(printf '%s' "$plugins_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
+    '{version: 1, variant: $variant, java: {version: $jv, vendor: $vendor}, buildTool: $bt, firewall: $fw, mcpServers: $mcp, plugins: $plugins}' \
+    > "$cfg"
+
+  render_dockerfile "$project_dir/.devcontainer/claude-task.Dockerfile" "$variant" "$java_version" "$java_vendor" "$build_tool"
+  write_devcontainer_json "$project_dir/.devcontainer/devcontainer.json"
+  if [[ "$firewall" == "allowlist" ]]; then
+    write_allowed_domains "$project_dir/.devcontainer/allowed-domains.conf" "$build_tool"
+  fi
+  write_mcp_json "$project_dir/.mcp.json" "$mcp_csv"
+  write_claude_settings "$project_dir/.claude/settings.json" "$plugins_csv"
+  write_claude_md_skeleton "$project_dir/CLAUDE.md" "$project_name_val" "$build_tool"
+  [[ -f "$project_dir/tasks/.gitkeep" ]] || touch "$project_dir/tasks/.gitkeep"
+  ensure_gitignore_entries "$project_dir"
+
+  local -a to_add=(
+    ".devcontainer/claude-task.json"
+    ".devcontainer/claude-task.Dockerfile"
+    ".devcontainer/devcontainer.json"
+    ".mcp.json"
+    ".claude/settings.json"
+    "CLAUDE.md"
+    "tasks/.gitkeep"
+    ".gitignore"
+  )
+  [[ "$firewall" == "allowlist" ]] && to_add+=(".devcontainer/allowed-domains.conf")
+
+  ( cd "$project_dir" && git add "${to_add[@]}" )
+
+  echo
+  echo "Staged (not committed):"
+  local f
+  for f in "${to_add[@]}"; do
+    echo "  $f"
+  done
+  echo
+  echo "Review with 'git status' / 'git diff --cached', then commit, e.g.:"
+  echo "  git commit -m \"chore: add claude-task project config\""
+}
+
+# --- Distribution / self-update -------------------------------------------
+#
+# Initial install is a two-step curl (see README's "Install" section) — this
+# script can't bootstrap itself. --update repeats the same fetch against the
+# already-installed path.
+
+resolve_latest_tag() {
+  curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
+    | jq -r '.tag_name // empty'
+}
+
+cmd_update() {
+  local installed_path
+  installed_path="$(command -v claude-task 2>/dev/null || true)"
+  [[ -n "$installed_path" ]] || installed_path="${HOME}/.local/bin/claude-task"
+  if command -v readlink >/dev/null 2>&1; then
+    installed_path="$(readlink -f "$installed_path" 2>/dev/null || printf '%s' "$installed_path")"
+  fi
+
+  info "Checking latest release of ${GITHUB_REPO}..."
+  local tag
+  tag="$(resolve_latest_tag)"
+  [[ -n "$tag" ]] || die "Could not resolve the latest release (check network access / rate limits)."
+
+  local tmp url
+  tmp="$(mktemp)"
+  url="https://raw.githubusercontent.com/${GITHUB_REPO}/${tag}/bin/claude-task"
+  info "Downloading ${url}..."
+  curl -fsSL -o "$tmp" "$url" || { rm -f "$tmp"; die "Download failed."; }
+
+  local new_version
+  new_version="$(grep -m1 '^CLAUDE_TASK_VERSION=' "$tmp" | cut -d'"' -f2)"
+  if [[ -z "$new_version" ]]; then
+    rm -f "$tmp"
+    die "Downloaded file doesn't look like claude-task (no version string found)."
+  fi
+
+  chmod +x "$tmp"
+  mkdir -p "$(dirname "$installed_path")"
+  mv "$tmp" "$installed_path"
+
+  if [[ "$new_version" == "$CLAUDE_TASK_VERSION" ]]; then
+    info "Already up to date (v${CLAUDE_TASK_VERSION}, ${tag})."
+  else
+    info "Updated: v${CLAUDE_TASK_VERSION} -> v${new_version} (${tag})"
+    info "Installed at: ${installed_path}"
+  fi
+}
+
+# --- Dispatch --------------------------------------------------------------
+
+main() {
+  local cmd="${1:-}"
+  case "$cmd" in
+    --init)
+      shift; cmd_init "$@" ;;
+    --plan)
+      shift; cmd_start plan "$@" ;;
+    --shell)
+      shift; cmd_start shell "$@" ;;
+    --done)
+      shift; cmd_done "$@" ;;
+    --update)
+      shift; cmd_update "$@" ;;
+    --help|-h|"")
+      usage
+      [[ -z "$cmd" ]] && exit 1 || exit 0 ;;
+    --*)
+      err "Unknown option: $cmd"
+      usage
+      exit 1 ;;
+    *)
+      cmd_start claude "$@" ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
+  main "$@"
+fi
