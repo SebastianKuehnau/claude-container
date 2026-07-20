@@ -210,6 +210,14 @@ ensure_global_image() {
 build_run_args() {
   local worktree="$1" image_tag="$2" container_name="$3" cache_dir="$4" firewall="$5" main_repo_root="$6"
 
+  # Seed the worktree's devcontainer.env from its (git-tracked) example,
+  # copy-if-missing. A fresh worktree checkout carries the tracked example but
+  # not devcontainer.env (git-ignored), so this makes the file available for
+  # --env-file below without ever overwriting a user's edited copy.
+  local env_example="${worktree}/.devcontainer/devcontainer.env.example"
+  local env_file="${worktree}/.devcontainer/devcontainer.env"
+  [[ -f "$env_example" ]] && cp -n "$env_example" "$env_file" 2>/dev/null || true
+
   RUN_ARGS=(
     run -it --rm
     --name "$container_name"
@@ -218,18 +226,29 @@ build_run_args() {
     -v "${GLOBAL_CLAUDE_JSON}:/home/node/.claude.json"
     -v "${cache_dir}:/home/node/.m2/repository:cached"
     -v "${worktree}:/workspace:delegated"
-    -e "TZ=${TZ:-Europe/Helsinki}"
-    -e "GH_TOKEN=${GH_TOKEN:-}"
-    -e "GIT_USER_NAME=${GIT_USER_NAME:-}"
-    -e "GIT_USER_EMAIL=${GIT_USER_EMAIL:-}"
     -e "NODE_OPTIONS=--max-old-space-size=4096"
     -e "CLAUDE_CONFIG_DIR=/home/node/.claude"
     -e "DEVCONTAINER=true"
-    -e "VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}"
-    -e "NOTIFICATION_URL=${NOTIFICATION_URL:-}"
-    -p "9222:9222"
     -w /workspace
   )
+
+  # devcontainer.env provides defaults; an explicitly-exported host variable
+  # wins. --env-file is applied first, then any -e below overrides it. The
+  # overlapping vars are appended ONLY when set on the host, so an unset host
+  # var never blanks out the file's value.
+  [[ -f "$env_file" ]] && RUN_ARGS+=(--env-file "$env_file")
+  # TZ keeps its historical Europe/Helsinki fallback: host wins, else the file,
+  # else the built-in default (the example ships no TZ line).
+  if [[ -n "${TZ:-}" ]]; then
+    RUN_ARGS+=(-e "TZ=${TZ}")
+  elif [[ ! -f "$env_file" ]] || ! grep -q '^[[:space:]]*TZ=' "$env_file"; then
+    RUN_ARGS+=(-e "TZ=Europe/Helsinki")
+  fi
+  [[ -n "${GH_TOKEN:-}" ]]         && RUN_ARGS+=(-e "GH_TOKEN=${GH_TOKEN}")
+  [[ -n "${GIT_USER_NAME:-}" ]]    && RUN_ARGS+=(-e "GIT_USER_NAME=${GIT_USER_NAME}")
+  [[ -n "${GIT_USER_EMAIL:-}" ]]   && RUN_ARGS+=(-e "GIT_USER_EMAIL=${GIT_USER_EMAIL}")
+  [[ -n "${VAADIN_PRO_KEY:-}" ]]   && RUN_ARGS+=(-e "VAADIN_PRO_KEY=${VAADIN_PRO_KEY}")
+  [[ -n "${NOTIFICATION_URL:-}" ]] && RUN_ARGS+=(-e "NOTIFICATION_URL=${NOTIFICATION_URL}")
 
   # A git worktree's /workspace/.git is a FILE, not a directory: it points (by
   # absolute host path) into the main repo's .git/worktrees/<name>, and that
@@ -468,6 +487,10 @@ write_devcontainer_json() {
   "build": {
     "dockerfile": "claude-task.Dockerfile"
   },
+  "initializeCommand": "cp -n \"${localWorkspaceFolder}/.devcontainer/devcontainer.env.example\" \"${localWorkspaceFolder}/.devcontainer/devcontainer.env\" 2>/dev/null; true",
+  "runArgs": [
+    "--env-file", "${localWorkspaceFolder}/.devcontainer/devcontainer.env"
+  ],
   "mounts": [
     "source=${localEnv:HOME}/.claude-container/claude,target=/home/node/.claude,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.claude-container/claude.json,target=/home/node/.claude.json,type=bind,consistency=cached",
@@ -479,6 +502,16 @@ write_devcontainer_json() {
   "postCreateCommand": "sudo chown -R node:node /home/node/.claude /home/node/.claude.json /home/node/.m2",
   "postStartCommand": "sudo /usr/local/bin/init-firewall.sh"
 }
+EOF
+}
+
+# Writes the devcontainer.env.example template (git-tracked seed source) into a
+# scaffolded project. Same content as this repo's own example.
+write_devcontainer_env_example() {
+  cat > "$1" <<'EOF'
+#GH_TOKEN=github_pat_xxxxxxxxxxxx
+#GIT_USER_NAME=John Doe
+#GIT_USER_EMAIL=john.doe@email.de
 EOF
 }
 
@@ -708,6 +741,10 @@ cmd_init() {
 
   render_dockerfile "$project_dir/.devcontainer/claude-task.Dockerfile" "$variant" "$java_version" "$java_vendor" "$build_tool"
   write_devcontainer_json "$project_dir/.devcontainer/devcontainer.json"
+  write_devcontainer_env_example "$project_dir/.devcontainer/devcontainer.env.example"
+  # Seed the actual env file copy-if-missing (git-ignored; never overwritten).
+  cp -n "$project_dir/.devcontainer/devcontainer.env.example" \
+        "$project_dir/.devcontainer/devcontainer.env" 2>/dev/null || true
   if [[ "$firewall" == "allowlist" ]]; then
     write_allowed_domains "$project_dir/.devcontainer/allowed-domains.conf" "$build_tool"
   fi
@@ -721,6 +758,7 @@ cmd_init() {
     ".devcontainer/claude-task.json"
     ".devcontainer/claude-task.Dockerfile"
     ".devcontainer/devcontainer.json"
+    ".devcontainer/devcontainer.env.example"
     ".mcp.json"
     ".claude/settings.json"
     "CLAUDE.md"
