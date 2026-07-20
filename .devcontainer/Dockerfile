@@ -8,7 +8,7 @@ ARG VARIANT=base
 
 # ========================================
 # BASE-COMMON STAGE (shared dependencies)
-# Agent-agnostic: tools, Java, Playwright, browsers.
+# Agent-agnostic: tools, Java.
 # Agent CLIs (Claude Code, OpenCode) are added in downstream stages.
 # ========================================
 FROM node:${NODE_VERSION}-trixie AS base-common
@@ -17,9 +17,7 @@ ARG TZ=Europe/Helsinki
 
 ENV TZ=${TZ} \
     DEBIAN_FRONTEND=noninteractive \
-    NODE_PATH=/usr/local/lib/node_modules \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers \
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+    NODE_PATH=/usr/local/lib/node_modules
 
 # Install base dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -45,13 +43,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dnsutils \
     iputils-ping \
     apt-transport-https \
-    # Process tools (ps aux needed by CDP proxy monitor)
+    # Process tools (pgrep used by the dind entrypoint to detect dockerd)
     procps \
-    # Port forwarding for Playwright CDP (headless shell only binds to localhost)
-    socat \
-    # Playwright browser dependencies (for Java Playwright)
-    libxcursor1 \
-    libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI
@@ -110,46 +103,10 @@ ENV PATH="${JAVA_HOME}/bin:${PATH}"
 # Container-only on purpose — host-side IntelliJ/Maven stays untouched.
 ENV MAVEN_OPTS="-Daether.syncContext.named.factory=file-lock -Daether.syncContext.named.nameMapper=file-gav"
 
-# Install Playwright globally with Chromium browser (full + headless shell)
-# Pre-install browsers so they're included in the image and don't need to be downloaded at runtime
-# Create VERSION file documenting compatibility for Java Playwright users
-RUN npm install -g playwright \
-    && mkdir -p /opt/playwright-browsers \
-    && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers npx playwright install --with-deps chromium \
-    && PLAYWRIGHT_VERSION=$(npx playwright --version | sed 's/Version //') \
-    && echo "# Playwright Browser Compatibility Info" > /opt/playwright-browsers/VERSION \
-    && echo "# Generated at build time - do not edit" >> /opt/playwright-browsers/VERSION \
-    && echo "" >> /opt/playwright-browsers/VERSION \
-    && echo "PLAYWRIGHT_VERSION=${PLAYWRIGHT_VERSION}" >> /opt/playwright-browsers/VERSION \
-    && echo "CHROMIUM_BUILD=$(ls -d /opt/playwright-browsers/chromium-* | head -1 | xargs basename)" >> /opt/playwright-browsers/VERSION \
-    && echo "" >> /opt/playwright-browsers/VERSION \
-    && echo "# Java Playwright Compatibility:" >> /opt/playwright-browsers/VERSION \
-    && echo "# Use com.microsoft.playwright version matching PLAYWRIGHT_VERSION above" >> /opt/playwright-browsers/VERSION \
-    && echo "# Example Maven dependency:" >> /opt/playwright-browsers/VERSION \
-    && echo "#   <artifactId>playwright</artifactId>" >> /opt/playwright-browsers/VERSION \
-    && echo "#   <version>${PLAYWRIGHT_VERSION}</version>" >> /opt/playwright-browsers/VERSION
-
-# Install the Playwright Agent CLI (@playwright/cli) and its required browser.
-# Coding agents drive the browser with `playwright-cli` shell commands and concise
-# output (no tool schemas / page snapshots held in context), which is fast and
-# token-efficient. It bundles its own, newer playwright-core, so it needs its own
-# chromium build pre-installed here to avoid a runtime download (which the firewall
-# would block). The agent-facing skill is installed further down, once the node
-# user's home directory exists.
-RUN npm install -g @playwright/cli \
-    && CLI_PACKAGE_VERSION=$(npm list -g @playwright/cli --json 2>/dev/null | jq -r '.dependencies["@playwright/cli"].version // empty') \
-    && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers playwright-cli install-browser chromium --with-deps \
-    && echo "" >> /opt/playwright-browsers/VERSION \
-    && echo "# Playwright Agent CLI (for agent browser automation via shell commands):" >> /opt/playwright-browsers/VERSION \
-    && echo "CLI_PACKAGE_VERSION=${CLI_PACKAGE_VERSION}" >> /opt/playwright-browsers/VERSION \
-    && echo "CLI_CHROMIUM_BUILD=$(ls -dt /opt/playwright-browsers/chromium-* | head -1 | xargs basename)" >> /opt/playwright-browsers/VERSION
-
-# Make npm global directories and Playwright browsers writable by node user
-# This allows Claude to self-update and Java Playwright to create lock files
+# Make npm global directories writable by the node user
+# This allows Claude to self-update
 RUN chown -R node:node /usr/local/lib/node_modules \
-    && chown -R node:node /usr/local/bin \
-    && chown -R node:node /opt/playwright-browsers \
-    && chmod -R 755 /opt/playwright-browsers
+    && chown -R node:node /usr/local/bin
 
 # Configure node user with sudo access
 RUN echo "node ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/node \
@@ -159,14 +116,6 @@ RUN echo "node ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/node \
 RUN mkdir -p /home/node/.claude /home/node/.config/gh /commandhistory \
     && chown -R node:node /home/node /commandhistory
 
-# Install the Playwright Agent CLI skill into the node user's personal skills
-# directory. `playwright-cli install --skills claude` writes to ~/.claude/skills.
-# Claude Code reads ~/.claude/skills, and OpenCode also discovers skills there
-# (in addition to ~/.config/opencode/skills), so this single copy serves the
-# base, opencode and dind variants alike. Baking it into the image keeps it out
-# of the user's mounted workspace (no repo pollution) and available everywhere.
-RUN su - node -c "playwright-cli install --skills claude"
-
 # Install Oh My Zsh for the node user
 USER node
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
@@ -175,7 +124,6 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
 RUN echo '\n# Claude Code aliases' >> /home/node/.zshrc \
     && echo 'alias firewall-reload="sudo /usr/local/bin/init-firewall.sh"' >> /home/node/.zshrc \
     && echo 'alias firewall-status="sudo iptables -L -n -v"' >> /home/node/.zshrc \
-    && echo 'alias playwright-info="playwright-info"' >> /home/node/.zshrc \
     && echo '\n# History settings for persistent history' >> /home/node/.zshrc \
     && echo 'HISTFILE=/commandhistory/.zsh_history' >> /home/node/.zshrc \
     && echo 'HISTSIZE=10000' >> /home/node/.zshrc \
@@ -215,11 +163,10 @@ RUN su - node -c 'echo -e "/plugin marketplace add vaadin/agent-marketplace\n/pl
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY init-vaadin-plugins.sh /usr/local/bin/init-vaadin-plugins.sh
-COPY playwright-info.sh /usr/local/bin/playwright-info
 COPY statusline-command.sh /usr/local/bin/statusline-command.sh
 COPY claude-language-policy.md /usr/local/etc/claude-language-policy.md
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/init-vaadin-plugins.sh /usr/local/bin/playwright-info /usr/local/bin/statusline-command.sh
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/init-vaadin-plugins.sh /usr/local/bin/statusline-command.sh
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
@@ -257,9 +204,8 @@ RUN if [ "${OPENCODE_VERSION}" = "latest" ]; then \
 # Copy firewall, entrypoint, and helper scripts
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint-opencode.sh /usr/local/bin/entrypoint.sh
-COPY playwright-info.sh /usr/local/bin/playwright-info
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/playwright-info
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh
 
 # Set working directory and ensure node user owns it
 RUN mkdir -p /workspace && chown node:node /workspace
@@ -291,7 +237,6 @@ COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
 COPY init-vaadin-plugins.sh /usr/local/bin/init-vaadin-plugins.sh
-COPY playwright-info.sh /usr/local/bin/playwright-info
 COPY statusline-command.sh /usr/local/bin/statusline-command.sh
 COPY claude-language-policy.md /usr/local/etc/claude-language-policy.md
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
@@ -299,7 +244,6 @@ RUN chmod +x /usr/local/bin/init-firewall.sh \
              /usr/local/bin/entrypoint.sh \
              /usr/local/bin/entrypoint-dind.sh \
              /usr/local/bin/init-vaadin-plugins.sh \
-             /usr/local/bin/playwright-info \
              /usr/local/bin/statusline-command.sh
 
 # Set working directory and ensure node user owns it
