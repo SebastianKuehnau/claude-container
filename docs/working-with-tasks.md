@@ -149,9 +149,8 @@ current `origin/main` state without starting an interactive Claude session:
 It runs in the same image/cache setup as `claude-task <branch>` — push and
 PR work because `GH_TOKEN` + git identity are passed into every container
 (see container-capabilities.md, `## 8. Persistent authentication & state`).
-Unlike an interactive session it runs headless: no TTY is allocated and the
-Chrome debug port (9222) is not published, so `--sync` can run alongside a
-live session for the same or another branch without a port collision.
+Unlike an interactive session it runs headless: no TTY is allocated, so
+`--sync` can run alongside a live session for the same or another branch.
 
 ## `--done` safety checks
 

@@ -8,7 +8,6 @@ This repository contains a Docker container setup for running AI coding agents (
 
 - Claude Code (or OpenCode) pre-installed
 - Java 25 (Temurin JDK) for Java/Vaadin development
-- Playwright + Chromium for browser automation (MCP and agent CLI variants)
 - GitHub CLI (`gh`)
 - Firewall (iptables) for network access control
 - Oh My Zsh with useful aliases
@@ -91,7 +90,7 @@ Key environment variables:
 | `NOTIFICATION_URL` | URL called when Claude is idle (e.g. ntfy.sh) |
 | `SKIP_FIREWALL` | Set to `1` to disable firewall init |
 
-The devcontainer additionally uses `.devcontainer/devcontainer.env` (gitignored) for secrets — see `.devcontainer/devcontainer.env.example`.
+The devcontainer additionally uses `.devcontainer/devcontainer.env` (gitignored) for secrets. It is seeded copy-if-missing from `.devcontainer/devcontainer.env.example` by the `initializeCommand` (never overwriting an edited file) and passed via `--env-file`.
 
 ## Architecture
 
@@ -112,23 +111,11 @@ docs/
   install-docker.sh       # Install Docker CE; shared by all DinD build stages
   init-firewall.sh        # iptables firewall setup (runs at postStart)
   allowed-domains.conf    # Allowlist for outbound network access
-  playwright-info.sh      # Helper script: show installed Playwright versions
   statusline-command.sh   # Claude Code status line (model + progress bar + context %)
   claude-language-policy.md  # Global CLAUDE.md policy: German chat, English code/docs
 docker-compose.yml        # All five service variants
 .env.example              # Environment variable template
 ```
-
-## Playwright Setup
-
-Two Playwright installations coexist in the image (all browsers pre-installed at `/opt/playwright-browsers`):
-
-1. **`playwright` (npm global)** — for Java Playwright integration tests
-2. **`@playwright/cli` (npm global, `playwright-cli`)** — lower-token agent browser automation via shell commands; also installs the `claude` browser skills into `~/.claude/skills`
-
-(The deprecated `@playwright/mcp` was removed from the image.)
-
-Run `playwright-info` inside the container to see installed versions and Chromium build IDs.
 
 ## Firewall
 

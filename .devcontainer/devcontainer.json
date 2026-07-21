@@ -10,7 +10,7 @@
       "JAVA_VENDOR": "${localEnv:JAVA_VENDOR:temurin}"
     }
   },
-  "initializeCommand": "touch \"${localWorkspaceFolder}/.devcontainer/devcontainer.env\" && mkdir -p \"${localEnv:HOME}/.claude-m2-cache\" && mkdir -p \"${localEnv:HOME}/.claude-container/claude\" && touch \"${localEnv:HOME}/.claude-container/claude.json\"",
+  "initializeCommand": "cp -n \"${localWorkspaceFolder}/.devcontainer/devcontainer.env.example\" \"${localWorkspaceFolder}/.devcontainer/devcontainer.env\" 2>/dev/null; mkdir -p \"${localEnv:HOME}/.claude-m2-cache\" && mkdir -p \"${localEnv:HOME}/.claude-container/claude\" && touch \"${localEnv:HOME}/.claude-container/claude.json\"",
   "runArgs": [
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW",
@@ -42,18 +42,9 @@
     "source=${localEnv:HOME}/.claude-container/claude.json,target=/home/node/.claude.json,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.claude-m2-cache,target=/home/node/.m2/repository,type=bind,consistency=cached"
   ],
-  "forwardPorts": [9222],
-  "portsAttributes": {
-    "9222": {
-      "label": "Playwright CDP",
-      "onAutoForward": "silent"
-    }
-  },
   "containerEnv": {
     "NODE_OPTIONS": "--max-old-space-size=4096",
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
-    "PLAYWRIGHT_BROWSERS_PATH": "/opt/playwright-browsers",
-    "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
     "OLLAMA_BASE_URL": "http://host.docker.internal:11434"
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",

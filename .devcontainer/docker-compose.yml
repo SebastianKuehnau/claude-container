@@ -35,8 +35,6 @@ services:
       - GIT_USER_NAME=${GIT_USER_NAME:-}
       - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
-    ports:
-      - "9222:9222"
     working_dir: /workspace
     stdin_open: true
     tty: true
