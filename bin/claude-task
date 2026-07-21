@@ -689,6 +689,11 @@ write_devcontainer_env_example() {
 #GH_TOKEN=github_pat_xxxxxxxxxxxx
 #GIT_USER_NAME=John Doe
 #GIT_USER_EMAIL=john.doe@email.de
+
+# Local override for the claude-task container/image name. Wins over the
+# committed "name" in .devcontainer/claude-task.json; unset (or empty) falls
+# back to that config value, then to the repository directory name.
+#CLAUDE_TASK_NAME=my-project
 EOF
 }
 
@@ -893,6 +898,16 @@ cmd_init() {
   echo "claude-task --init — answer a few questions (Enter accepts the default)."
   echo
 
+  # Project name drives the per-project image tag (claude-task-<name>) and the
+  # per-worktree container name (claude-<name>-<branch>). Committed here as the
+  # team-canonical source; a developer can override locally via CLAUDE_TASK_NAME
+  # in .devcontainer/devcontainer.env. Default is the repository directory name
+  # (today's behavior). Sanitized at resolution time, so free-form input is fine.
+  local default_name name_val
+  default_name="$(basename "$project_dir")"
+  read -rp "Project name [$default_name]: " name_val
+  name_val="${name_val:-$default_name}"
+
   local java_version java_vendor build_tool variant firewall mcp_csv plugins_csv
   java_version="$(ask_choice 'Java version' '25' '17,21,25')"
   java_vendor="$(ask_choice 'Java vendor' 'temurin' 'temurin,corretto,zulu')"
@@ -915,11 +930,12 @@ cmd_init() {
   project_name_val="$(basename "$project_dir")"
 
   jq -n \
+    --arg name "$name_val" \
     --arg jv "$java_version" --arg vendor "$java_vendor" --arg bt "$build_tool" \
     --arg variant "$variant" --arg fw "$firewall" \
     --argjson mcp "$(printf '%s' "$mcp_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
     --argjson plugins "$(printf '%s' "$plugins_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
-    '{version: 1, variant: $variant, java: {version: $jv, vendor: $vendor}, buildTool: $bt, firewall: $fw, mcpServers: $mcp, plugins: $plugins}' \
+    '{version: 1, name: $name, variant: $variant, java: {version: $jv, vendor: $vendor}, buildTool: $bt, firewall: $fw, mcpServers: $mcp, plugins: $plugins}' \
     > "$cfg"
 
   render_dockerfile "$project_dir/.devcontainer/claude-task.Dockerfile" "$variant" "$java_version" "$java_vendor" "$build_tool"
