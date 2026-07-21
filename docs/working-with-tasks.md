@@ -107,10 +107,30 @@ firewall profile is deliberately excluded from the hash — it's a runtime
 mount/env concern, not baked into the image, so switching it never
 triggers a rebuild.
 
-**Container naming:** `claude-<project>-<branch>`, both sanitized
+**Container naming:** `claude-<name>-<branch>` (and the project image is
+`claude-task-<name>:latest`). Both `<name>` and `<branch>` are sanitized
 (lowercased, disallowed characters collapsed to `-`) to satisfy Docker's
 naming rules — this is why a branch like `Feature/Foo_Bar` becomes
 `feature-foo_bar` in the container name.
+
+`<name>` resolves in this precedence:
+
+1. **`CLAUDE_TASK_NAME`** in the git-ignored `.devcontainer/devcontainer.env`
+   (read from the *main repo root*, so every worktree of the project resolves
+   the same name) — a per-developer **local override**;
+2. the committed **`name`** field in `.devcontainer/claude-task.json` — the
+   team-canonical source, written by `claude-task --init`;
+3. the **repository directory name** — the historical default.
+
+With no override and no `name` field, resolution is byte-identical to the
+old directory-derived behavior, so unconfigured projects are unaffected.
+
+> **Caveat:** because the name is resolved fresh on every invocation,
+> changing `CLAUDE_TASK_NAME` (or the config `name`) while a container is
+> running orphans that container — its old name no longer resolves, so
+> `claude-task --shell`/`--done` won't find it. Stop the session first
+> (`claude-task --done <branch>`), then change the name. There is no
+> auto-recovery.
 
 ## Worktree-safe Maven cache
 
