@@ -274,7 +274,8 @@ generated `.devcontainer/claude-task.Dockerfile` (`FROM` the published base
 image + a SDKMAN layer for your Java/build-tool choices),
 `.devcontainer/devcontainer.json`, `.devcontainer/allowed-domains.conf`
 (only if `allowlist`), `.mcp.json`, `.claude/settings.json`, `CLAUDE.md`,
-`tasks/`, and two `.gitignore` entries. Review with `git status` /
+and three `.gitignore` entries (including `tasks/`, so task specs stay
+branch-local and never reach `main`). Review with `git status` /
 `git diff --cached`, then commit yourself. Re-running `--init` on an
 already-initialized project refuses to touch anything unless you pass
 `--force` — and even then, `CLAUDE.md` / `.claude/settings.json` are only
