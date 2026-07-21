@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-CLAUDE_TASK_VERSION="0.1.0"
+CLAUDE_TASK_VERSION="0.2.0"
 GITHUB_REPO="SebastianKuehnau/claude-container"
 GHCR_IMAGE="ghcr.io/sebastiankuehnau/claude-container"
 
