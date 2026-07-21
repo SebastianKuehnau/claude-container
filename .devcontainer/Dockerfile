@@ -160,10 +160,10 @@ RUN su - node -c 'echo -e "/plugin marketplace add vaadin/agent-marketplace\n/pl
     echo "Warning: Vaadin plugins could not be pre-installed. Install manually with: /plugin marketplace add vaadin/agent-marketplace"
 
 # Copy firewall, entrypoint, and helper scripts
-COPY init-firewall.sh /usr/local/bin/init-firewall.sh
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY init-vaadin-plugins.sh /usr/local/bin/init-vaadin-plugins.sh
-COPY statusline-command.sh /usr/local/bin/statusline-command.sh
+COPY scripts/init-firewall.sh /usr/local/bin/init-firewall.sh
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY scripts/init-vaadin-plugins.sh /usr/local/bin/init-vaadin-plugins.sh
+COPY scripts/statusline-command.sh /usr/local/bin/statusline-command.sh
 COPY claude-language-policy.md /usr/local/etc/claude-language-policy.md
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/init-vaadin-plugins.sh /usr/local/bin/statusline-command.sh
@@ -202,8 +202,8 @@ RUN if [ "${OPENCODE_VERSION}" = "latest" ]; then \
     && ln -sf /home/node/.opencode/bin/opencode /usr/local/bin/opencode
 
 # Copy firewall, entrypoint, and helper scripts
-COPY init-firewall.sh /usr/local/bin/init-firewall.sh
-COPY entrypoint-opencode.sh /usr/local/bin/entrypoint.sh
+COPY scripts/init-firewall.sh /usr/local/bin/init-firewall.sh
+COPY scripts/entrypoint-opencode.sh /usr/local/bin/entrypoint.sh
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh
 
@@ -226,18 +226,18 @@ FROM base AS dind
 USER root
 
 # Install Docker CE and configure the daemon (shared with opencode-dind).
-COPY install-docker.sh /usr/local/bin/install-docker.sh
+COPY scripts/install-docker.sh /usr/local/bin/install-docker.sh
 RUN chmod +x /usr/local/bin/install-docker.sh && /usr/local/bin/install-docker.sh
 
 # Add node user to docker group
 RUN usermod -aG docker node
 
 # Copy scripts (including the DinD entrypoint)
-COPY init-firewall.sh /usr/local/bin/init-firewall.sh
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
-COPY init-vaadin-plugins.sh /usr/local/bin/init-vaadin-plugins.sh
-COPY statusline-command.sh /usr/local/bin/statusline-command.sh
+COPY scripts/init-firewall.sh /usr/local/bin/init-firewall.sh
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY scripts/entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
+COPY scripts/init-vaadin-plugins.sh /usr/local/bin/init-vaadin-plugins.sh
+COPY scripts/statusline-command.sh /usr/local/bin/statusline-command.sh
 COPY claude-language-policy.md /usr/local/etc/claude-language-policy.md
 COPY allowed-domains.conf /usr/local/etc/allowed-domains.conf
 RUN chmod +x /usr/local/bin/init-firewall.sh \
@@ -266,7 +266,7 @@ FROM opencode AS opencode-dind
 USER root
 
 # Install Docker CE and configure the daemon (shared with dind).
-COPY install-docker.sh /usr/local/bin/install-docker.sh
+COPY scripts/install-docker.sh /usr/local/bin/install-docker.sh
 RUN chmod +x /usr/local/bin/install-docker.sh && /usr/local/bin/install-docker.sh
 
 # Add node user to docker group
@@ -274,7 +274,7 @@ RUN usermod -aG docker node
 
 # Copy the DinD entrypoint (other scripts were installed by the opencode stage,
 # whose entrypoint-opencode.sh already lives at /usr/local/bin/entrypoint.sh).
-COPY entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
+COPY scripts/entrypoint-dind.sh /usr/local/bin/entrypoint-dind.sh
 RUN chmod +x /usr/local/bin/entrypoint-dind.sh
 
 WORKDIR /workspace

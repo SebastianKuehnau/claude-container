@@ -17,13 +17,18 @@ This repository contains a Docker container setup for running AI coding agents (
 `bin/claude-task` is a standalone bash script (installable without cloning
 this repo — see README "Install") that runs Claude Code per branch, one git
 worktree each, in a container. `claude-task --init` scaffolds a
-project-specific `.devcontainer/claude-task.json` (Java version/vendor,
+project-specific `.devcontainer/claude-task.json` (name, Java version/vendor,
 build tool, container variant, firewall profile, MCP servers, plugins); a
-project with this file gets its own image (`claude-task-<project>:latest`,
+project with this file gets its own image (`claude-task-<name>:latest`,
 built `FROM` the published GHCR base image + a SDKMAN layer) and a
 worktree-shared Maven cache at `<main-repo-root>/.devcontainer/m2-cache`.
-Projects without the config file keep the global image/cache behavior
-unchanged. Full workflow: [docs/working-with-tasks.md](docs/working-with-tasks.md).
+The `<name>` that drives the image tag and the per-worktree container
+(`claude-<name>-<branch>`) resolves in precedence: `CLAUDE_TASK_NAME` in the
+git-ignored `.devcontainer/devcontainer.env` (local override) → the committed
+`name` field in `claude-task.json` → the repository directory name (default).
+Projects without the config file and without an override keep the global
+image/cache behavior and directory-derived name unchanged. Full workflow:
+[docs/working-with-tasks.md](docs/working-with-tasks.md).
 
 ## Build Variants
 
@@ -105,13 +110,15 @@ docs/
   devcontainer-dind.json  # VS Code dev container config (DinD variant)
   devcontainer-opencode.json  # VS Code dev container config (OpenCode variant)
   devcontainer-opencode-dind.json  # VS Code dev container config (OpenCode DinD variant)
-  entrypoint.sh           # Container entrypoint (base/dind)
-  entrypoint-opencode.sh  # Container entrypoint (opencode)
-  entrypoint-dind.sh      # Docker daemon startup (dind)
-  install-docker.sh       # Install Docker CE; shared by all DinD build stages
-  init-firewall.sh        # iptables firewall setup (runs at postStart)
+  scripts/                # Shell scripts COPY'd into the image (see Dockerfile)
+    entrypoint.sh           # Container entrypoint (base/dind)
+    entrypoint-opencode.sh  # Container entrypoint (opencode)
+    entrypoint-dind.sh      # Docker daemon startup (dind)
+    install-docker.sh       # Install Docker CE; shared by all DinD build stages
+    init-firewall.sh        # iptables firewall setup (runs at postStart)
+    init-vaadin-plugins.sh  # Vaadin plugin bootstrap helper
+    statusline-command.sh   # Claude Code status line (model + progress bar + context %)
   allowed-domains.conf    # Allowlist for outbound network access
-  statusline-command.sh   # Claude Code status line (model + progress bar + context %)
   claude-language-policy.md  # Global CLAUDE.md policy: German chat, English code/docs
 docker-compose.yml        # All five service variants
 .env.example              # Environment variable template
