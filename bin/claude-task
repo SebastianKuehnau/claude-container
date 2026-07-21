@@ -776,10 +776,15 @@ This file provides guidance to Claude Code when working in this repository.
 EOF
 }
 
+# `tasks/` is gitignored on purpose: a task spec is authored inside the
+# branch's worktree (in the same session that implements it) and must never
+# reach `main`. Keeping the whole directory untracked means the spec is
+# invisible to `git status --porcelain`, so it neither blocks `--done`/`--sync`
+# nor rides along into a PR merge.
 ensure_gitignore_entries() {
   local gi="$1/.gitignore" entry
   touch "$gi"
-  for entry in ".devcontainer/m2-cache/" ".devcontainer/devcontainer.env"; do
+  for entry in ".devcontainer/m2-cache/" ".devcontainer/devcontainer.env" "tasks/"; do
     grep -qxF "$entry" "$gi" || printf '%s\n' "$entry" >> "$gi"
   done
 }
@@ -846,7 +851,8 @@ cmd_init() {
   write_mcp_json "$project_dir/.mcp.json" "$mcp_csv"
   write_claude_settings "$project_dir/.claude/settings.json" "$plugins_csv"
   write_claude_md_skeleton "$project_dir/CLAUDE.md" "$project_name_val" "$build_tool"
-  [[ -f "$project_dir/tasks/.gitkeep" ]] || touch "$project_dir/tasks/.gitkeep"
+  # No .gitkeep: tasks/ is gitignored (see ensure_gitignore_entries) — specs
+  # live only in the per-branch worktree and are never committed.
   ensure_gitignore_entries "$project_dir"
 
   local -a to_add=(
@@ -856,7 +862,6 @@ cmd_init() {
     ".mcp.json"
     ".claude/settings.json"
     "CLAUDE.md"
-    "tasks/.gitkeep"
     ".gitignore"
   )
   [[ "$firewall" == "allowlist" ]] && to_add+=(".devcontainer/allowed-domains.conf")

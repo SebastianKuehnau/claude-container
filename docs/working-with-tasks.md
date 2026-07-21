@@ -51,6 +51,30 @@ uncommitted/unpushed-work safety check) for `--done`.
 terminal to it (`docker exec`) instead of starting a new one — handy for
 poking around while a Claude session is active in another terminal.
 
+## Spec and implement in one session
+
+You do **not** need one session to author a task spec on `main` and a second
+to implement it. Because `claude-task <branch>` creates the worktree off the
+current `HEAD` when the branch doesn't exist yet, a single session can do both:
+
+```bash
+claude-task feature/my-task     # (or --plan) — new worktree off HEAD
+```
+
+Inside that session you co-author the spec with Claude and then implement it
+straight away, all on the feature branch. `main` never sees the spec because
+`--init` gitignores the whole `tasks/` directory: a spec written to
+`tasks/<name>.md` is untracked, so it stays in the worktree only. Being
+untracked, it also does not appear in `git status --porcelain`, so it never
+blocks `--done`/`--sync` and never rides along when the branch is merged.
+
+Notes:
+- This is deliberately a "write the spec directly" flow. The `task-spec`
+  skill is built for the split workflow (spec on `main`, hand off to a fresh
+  worktree) and stops when run on a feature branch — don't invoke it here.
+- If you ever *want* a spec versioned, commit it with `git add -f`
+  (force past the ignore rule) — but then it will reach `main` on merge.
+
 ## Project-specific images
 
 A project that ran `claude-task --init` gets its own image,
