@@ -141,6 +141,48 @@ cfg_get() {
   jq -r "${filter} // \"${default}\"" "$cfg"
 }
 
+# Reads a KEY=value from an env file, robustly: matches only real (uncommented)
+# assignments — a leading '#' makes the anchored key fail to match — strips
+# surrounding whitespace and one layer of matching quotes, and tolerates a
+# missing file. The last matching assignment wins. Echoes the value (which may
+# be empty); never fails.
+env_file_value() {
+  local file="$1" key="$2" line val
+  [[ -f "$file" ]] || return 0
+  line="$(grep -E "^[[:space:]]*${key}=" "$file" 2>/dev/null | tail -n1)" || true
+  [[ -n "$line" ]] || return 0
+  val="${line#*=}"
+  val="${val#"${val%%[![:space:]]*}"}"   # ltrim
+  val="${val%"${val##*[![:space:]]}"}"   # rtrim
+  if [[ ${#val} -ge 2 && "$val" == \"*\" ]]; then
+    val="${val:1:${#val}-2}"
+  elif [[ ${#val} -ge 2 && "$val" == \'*\' ]]; then
+    val="${val:1:${#val}-2}"
+  fi
+  printf '%s' "$val"
+}
+
+# Resolves the project name that drives the image tag and container name, in
+# precedence order:
+#   1. CLAUDE_TASK_NAME in the main-repo-root local env file — local override;
+#   2. .name in .devcontainer/claude-task.json — committed/team source;
+#   3. the main-repo directory basename (project_name) — historical fallback.
+# The env file is read from the MAIN repo root (not the worktree) so every
+# worktree of a project resolves the same name, and so cmd_done/--shell find
+# the container cmd_start created. The result always passes through sanitize().
+resolve_project_name() {
+  local main_repo_root="$1" config_dir="$2" name=""
+
+  name="$(env_file_value "${main_repo_root}/.devcontainer/devcontainer.env" "CLAUDE_TASK_NAME")"
+
+  if [[ -z "$name" ]] && has_project_config "$config_dir"; then
+    name="$(cfg_get "$(config_path "$config_dir")" '.name' '')"
+  fi
+
+  [[ -n "$name" ]] || name="$(project_name "$main_repo_root")"
+  sanitize "$name"
+}
+
 # Best-effort build-tool detection for projects WITHOUT a claude-task.json
 # (the configured `buildTool` field wins whenever a config file is present).
 # Used by --sync so a non-Maven global project doesn't fail on `./mvnw`.
@@ -307,10 +349,10 @@ cmd_start() {
   [[ -n "$branch" ]] || die "Usage: claude-task [--plan|--shell] <branch>"
 
   require_git_repo
-  local main_repo_root project worktree
+  local main_repo_root worktree project
   main_repo_root="$(resolve_main_repo_root)"
-  project="$(project_name "$main_repo_root")"
   worktree="$(find_or_create_worktree "$main_repo_root" "$branch")"
+  project="$(resolve_project_name "$main_repo_root" "$worktree")"
 
   local image_tag cache_dir firewall container_name
   container_name="$(container_name_for "$project" "$branch")"
@@ -367,10 +409,10 @@ cmd_done() {
   [[ -n "$branch" ]] || die "Usage: claude-task --done <branch>"
 
   require_git_repo
-  local main_repo_root project worktree container_name
+  local main_repo_root worktree project container_name
   main_repo_root="$(resolve_main_repo_root)"
-  project="$(project_name "$main_repo_root")"
   worktree="$(worktree_path "$main_repo_root" "$branch")"
+  project="$(resolve_project_name "$main_repo_root" "$worktree")"
   container_name="$(container_name_for "$project" "$branch")"
 
   if ! worktree_exists "$main_repo_root" "$worktree"; then
@@ -436,10 +478,10 @@ cmd_sync() {
     || die "claude-task --sync needs GH_TOKEN (a token with repo write scope) — see .env.example."
 
   require_git_repo
-  local main_repo_root project worktree
+  local main_repo_root worktree project
   main_repo_root="$(resolve_main_repo_root)"
-  project="$(project_name "$main_repo_root")"
   worktree="$(worktree_path "$main_repo_root" "$branch")"
+  project="$(resolve_project_name "$main_repo_root" "$worktree")"
 
   worktree_exists "$main_repo_root" "$worktree" \
     || die "No worktree found for branch '$branch' at $worktree"
