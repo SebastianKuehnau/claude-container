@@ -405,7 +405,7 @@ cmd_done() {
   info "Done. Branch '$branch' itself was left intact — delete it manually if no longer needed."
 }
 
-# --- --sync: rebase onto origin/main, test, push, open/update PR -----------
+# --- --sync: rebase onto origin/main, test, strip spec, push, open/update PR --
 #
 # Runs the mechanical "get this branch merge-ready" steps inside the same
 # per-project (or global) image/cache/mount setup as cmd_start — GH_TOKEN and
@@ -487,6 +487,12 @@ cmd_sync() {
       exit 10
     fi
     ${test_cmd}
+    # Strip the task spec before merge: it stays in the branch history but must
+    # not reach main. Only commit a removal if tasks/ is actually tracked.
+    if git ls-files --error-unmatch tasks/ >/dev/null 2>&1; then
+      git rm -r --quiet tasks/
+      git commit --quiet -m 'chore: strip task spec before merge'
+    fi
     if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
       git push --force-with-lease
     else
@@ -499,7 +505,7 @@ cmd_sync() {
     fi
   ")
 
-  info "Syncing '$branch' against origin/main (rebase + test + push + PR)..."
+  info "Syncing '$branch' against origin/main (rebase + test + strip task spec + push + PR)..."
   local rc=0
   docker "${RUN_ARGS[@]}" || rc=$?
 
@@ -806,15 +812,16 @@ This file provides guidance to Claude Code when working in this repository.
 EOF
 }
 
-# `tasks/` is gitignored on purpose: a task spec is authored inside the
-# branch's worktree (in the same session that implements it) and must never
-# reach `main`. Keeping the whole directory untracked means the spec is
-# invisible to `git status --porcelain`, so it neither blocks `--done`/`--sync`
-# nor rides along into a PR merge.
+# `tasks/` is deliberately NOT gitignored: a task spec is committed to its
+# feature branch (so it lives in the branch history and can be reviewed and
+# discussed), but must never reach `main`. `--sync` strips `tasks/` in a
+# dedicated commit right before pushing, so the branch tip that opens the PR
+# is spec-free while the spec stays reachable through the branch's earlier
+# commits. See cmd_sync.
 ensure_gitignore_entries() {
   local gi="$1/.gitignore" entry
   touch "$gi"
-  for entry in ".devcontainer/m2-cache/" ".devcontainer/devcontainer.env" "tasks/"; do
+  for entry in ".devcontainer/m2-cache/" ".devcontainer/devcontainer.env"; do
     grep -qxF "$entry" "$gi" || printf '%s\n' "$entry" >> "$gi"
   done
 }
@@ -885,8 +892,9 @@ cmd_init() {
   write_mcp_json "$project_dir/.mcp.json" "$mcp_csv"
   write_claude_settings "$project_dir/.claude/settings.json" "$plugins_csv"
   write_claude_md_skeleton "$project_dir/CLAUDE.md" "$project_name_val" "$build_tool"
-  # No .gitkeep: tasks/ is gitignored (see ensure_gitignore_entries) — specs
-  # live only in the per-branch worktree and are never committed.
+  # No .gitkeep: tasks/ carries no placeholder — a spec is committed to its
+  # feature branch on demand and stripped before merge (see ensure_gitignore_entries
+  # and cmd_sync).
   ensure_gitignore_entries "$project_dir"
 
   local -a to_add=(

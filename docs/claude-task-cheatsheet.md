@@ -13,7 +13,7 @@ One branch = one git worktree = one container. See
 | `claude-task <branch>` | Start (or attach to) a Claude Code session for `<branch>`. Creates the worktree + container if missing. |
 | `claude-task --plan <branch>` | Same as above, but start Claude in **plan mode** (`--permission-mode plan`). |
 | `claude-task --shell <branch>` | Open a `zsh` debug shell instead of Claude. If the container is already running, attaches a **second** terminal (`docker exec`). |
-| `claude-task --sync <branch>` | Headless: rebase onto `origin/main`, run tests, push, open/update the PR. No Claude session. |
+| `claude-task --sync <branch>` | Headless: rebase onto `origin/main`, run tests, strip `tasks/` before merge, push, open/update the PR. No Claude session. |
 | `claude-task --done <branch>` | Stop & remove the container, then remove the worktree. The branch itself is kept. |
 | `claude-task --init [--force]` | Scaffold a project-specific container config (interactive Q&A). |
 | `claude-task --update` | Self-update the script to the latest GitHub release. |
@@ -92,12 +92,12 @@ Author the task file and implement it in the same session; ship via PR.
 claude-task feature/my-task
 #    (or: claude-task --plan feature/my-task  to start in plan mode)
 
-# 2. Inside the container / Claude session:
-#    - Co-author the spec into tasks/my-task.md
-#    - Implement it straight away on the same branch
-#    - Commit your work (git commit ...)
+# 2. Inside the container / Claude session (the task-spec skill drives this):
+#    - Co-author the spec into tasks/my-task.md, prove feasibility, discuss
+#    - Commit the spec to the branch (git add tasks/my-task.md && git commit ...)
+#    - After the plan gate, implement it on the same branch; commit each step
 
-# 3. Ship it: rebase onto origin/main, run tests, push, open the PR
+# 3. Ship it: rebase onto origin/main, run tests, strip tasks/, push, open the PR
 claude-task --sync feature/my-task     # needs GH_TOKEN with repo write scope
 
 # 4. Merge the PR on GitHub, then clean up
@@ -105,10 +105,11 @@ claude-task --done feature/my-task
 ```
 
 Notes:
-- `tasks/` is **gitignored** — the spec stays in the worktree, never reaches
-  `main`, and never blocks `--done`/`--sync`.
-- Do **not** run the `task-spec` skill here; it is built for the split flow
-  below and stops on a feature branch.
+- The spec **is committed to the branch** (it belongs in the branch history),
+  but `--sync` strips `tasks/` in a dedicated commit before pushing, so it
+  never reaches `main`.
+- Run the `task-spec` skill here — it drives exactly this single-session flow
+  (spec → feasibility → plan gate → implement).
 
 ---
 
@@ -120,35 +121,30 @@ Useful when spec authoring and implementation happen in separate sessions
 ```bash
 # --- Container A: author the spec ---
 claude-task --plan spec/my-task        # plan mode, worktree off HEAD
-#    Inside: co-author tasks/my-task.md (the task-spec skill fits here).
-#    Because tasks/ is gitignored, the spec is NOT shared via git.
+#    Inside: co-author tasks/my-task.md (the task-spec skill fits here),
+#    then commit it to the spec branch:
+#      git add tasks/my-task.md && git commit -m "docs: add task spec my-task"
 ```
 
-The spec is untracked, so to move it to the implementation worktree you copy
-the file across the sibling worktree directories on the host:
-
-```bash
-# On the host, copy the spec into the implementation branch's worktree.
-# Worktrees live at <parent-of-repo>/<repo>-worktrees/<branch>/
-cp ../<repo>-worktrees/spec/my-task/tasks/my-task.md \
-   ../<repo>-worktrees/feature/my-task/tasks/   # create feature worktree first (step below)
-```
+Because the spec is a normal commit on `spec/my-task`, the implementation
+branch inherits it through git — just branch off the spec branch:
 
 ```bash
 # --- Container B: implement the spec ---
-claude-task feature/my-task            # new worktree off HEAD (creates the dir)
+# Create the feature branch off the spec branch so it carries the committed spec.
+git branch feature/my-task spec/my-task    # (on the host, from any worktree)
+claude-task feature/my-task                # worktree off that branch
 #    Inside: implement tasks/my-task.md, commit the code.
 
-# Ship + clean up
+# Ship + clean up. --sync strips tasks/ before the PR, so main stays clean.
 claude-task --sync feature/my-task
 claude-task --done feature/my-task
 # Optionally clean up the spec worktree too:
 claude-task --done spec/my-task
 ```
 
-Tip: if you genuinely want the spec versioned/shared through git, commit it
-with `git add -f tasks/my-task.md` (forces past the ignore rule) — but then it
-rides along into `main` on merge.
+Note: the spec lives in both branches' history but never in `main` — `--sync`
+removes `tasks/` in a dedicated commit before pushing the feature branch.
 
 ---
 
@@ -263,7 +259,7 @@ git push origin --delete feature/my-task
 claude-task --init                 # once per project: scaffold config, commit it
 claude-task feature/x              # start: spec + implement + commit
 # ... exit to pause; re-run the same command to resume ...
-claude-task --sync feature/x       # rebase + test + push + PR  (needs GH_TOKEN)
+claude-task --sync feature/x       # rebase + test + strip tasks/ + push + PR  (needs GH_TOKEN)
 #   on conflict: claude-task feature/x  -> resolve -> claude-task --sync feature/x
 # merge PR on GitHub
 claude-task --done feature/x       # stop container, remove worktree
@@ -273,7 +269,9 @@ git branch -D feature/x            # delete the branch (manual)
 ## Requirements / gotchas
 
 - `--sync` requires `GH_TOKEN` (repo write scope) exported on the host.
-- Task specs go in `tasks/` and are **gitignored** by design.
+- Task specs go in `tasks/`, are **committed to the feature branch**, and are
+  **stripped by `--sync`** in a dedicated commit before merge — so they live in
+  the branch history but never reach `main`.
 - Project images rebuild automatically when the config/Dockerfile changes;
   use `--rebuild` to force a pull of a new upstream base image.
 - Worktrees are siblings of the repo: `<parent>/<repo>-worktrees/<branch>/`.

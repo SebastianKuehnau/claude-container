@@ -61,19 +61,22 @@ current `HEAD` when the branch doesn't exist yet, a single session can do both:
 claude-task feature/my-task     # (or --plan) — new worktree off HEAD
 ```
 
-Inside that session you co-author the spec with Claude and then implement it
-straight away, all on the feature branch. `main` never sees the spec because
-`--init` gitignores the whole `tasks/` directory: a spec written to
-`tasks/<name>.md` is untracked, so it stays in the worktree only. Being
-untracked, it also does not appear in `git status --porcelain`, so it never
-blocks `--done`/`--sync` and never rides along when the branch is merged.
+Inside that session you co-author the spec with Claude, prove its feasibility,
+discuss it, and — after the plan gate — implement it straight away, all on the
+feature branch. The spec is **committed to this branch** (it belongs in the
+branch history and can be reviewed), but it never reaches `main`: `claude-task
+--sync` strips the whole `tasks/` directory in a dedicated commit
+(`chore: strip task spec before merge`) right before it pushes, so the branch
+tip that opens the PR is spec-free while the spec stays reachable through the
+branch's earlier commits.
 
 Notes:
-- This is deliberately a "write the spec directly" flow. The `task-spec`
-  skill is built for the split workflow (spec on `main`, hand off to a fresh
-  worktree) and stops when run on a feature branch — don't invoke it here.
-- If you ever *want* a spec versioned, commit it with `git add -f`
-  (force past the ignore rule) — but then it will reach `main` on merge.
+- The `task-spec` skill drives exactly this single-session flow (spec →
+  feasibility → plan gate → implement) on the feature branch. Run it here.
+- `tasks/` is intentionally **not** gitignored, so `git add tasks/<name>.md`
+  works normally. You don't need `git add -f`, and you should not hand-carry
+  the spec onto `main` — the strip-before-merge step in `--sync` is what keeps
+  `main` clean.
 
 ## Project-specific images
 
@@ -142,9 +145,13 @@ current `origin/main` state without starting an interactive Claude session:
    Projects without a `claude-task.json` get the build tool auto-detected
    from the worktree (`mvnw`/`pom.xml` → maven, `gradlew`/`build.gradle` →
    gradle, otherwise skipped).
-4. `git push --force-with-lease` (or `git push -u origin HEAD` for a branch
+4. **Strip the task spec before merge:** if `tasks/` is tracked, `git rm -r
+   tasks/` + a dedicated `chore: strip task spec before merge` commit. The
+   spec stays in the branch history (earlier commits) but is absent from the
+   pushed tip, so it never lands in `main`. No-op if `tasks/` isn't tracked.
+5. `git push --force-with-lease` (or `git push -u origin HEAD` for a branch
    that was never pushed).
-5. `gh pr create --fill`, or a note if a PR already exists.
+6. `gh pr create --fill`, or a note if a PR already exists.
 
 It runs in the same image/cache setup as `claude-task <branch>` — push and
 PR work because `GH_TOKEN` + git identity are passed into every container
