@@ -102,6 +102,32 @@ a shared, bind-mounted repository.
 Projects without a `claude-task.json` keep using the global
 `~/.claude-m2-cache`, exactly as before.
 
+## `--sync`: rebase, test, push, PR
+
+`claude-task --sync <branch>` brings a finished branch up to date with the
+current `origin/main` state without starting an interactive Claude session:
+
+1. Refuses on uncommitted changes (like `--done`), and fails early if
+   `GH_TOKEN` is unset (push and `gh pr create` both need it).
+2. `git fetch origin` + `git rebase origin/main` — on conflict it aborts
+   with exit code 10 and points you at `claude-task <branch>` for
+   interactive resolution. The in-progress rebase persists (the main repo's
+   `.git` is bind-mounted), so that session sees the conflict via
+   `git status` immediately.
+3. A test run matching the configured `buildTool` (`maven`/`gradle`/`none`).
+   Projects without a `claude-task.json` get the build tool auto-detected
+   from the worktree (`mvnw`/`pom.xml` → maven, `gradlew`/`build.gradle` →
+   gradle, otherwise skipped).
+4. `git push --force-with-lease` (or `git push -u origin HEAD` for a branch
+   that was never pushed).
+5. `gh pr create --fill`, or a note if a PR already exists.
+
+It runs in the same image/cache setup as `claude-task <branch>` — push and
+PR work because `GH_TOKEN` + git identity are passed into every container
+(see container-capabilities.md, `## 8. Persistent authentication & state`).
+Unlike an interactive session it runs headless: no TTY is allocated, so
+`--sync` can run alongside a live session for the same or another branch.
+
 ## `--done` safety checks
 
 `claude-task --done <branch>` refuses to remove a worktree that has:
