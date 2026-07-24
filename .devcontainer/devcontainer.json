@@ -43,6 +43,8 @@
     "source=${localEnv:HOME}/.claude-m2-cache,target=/home/node/.m2/repository,type=bind,consistency=cached"
   ],
   "containerEnv": {
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}",
     "NODE_OPTIONS": "--max-old-space-size=4096",
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
     "OLLAMA_BASE_URL": "http://host.docker.internal:11434"

@@ -3,6 +3,9 @@
 #
 # Usage:
 #   claude-task <branch>       Start (or attach to) a Claude Code session for <branch>.
+#                              Runs with permission prompts bypassed (YOLO) by
+#                              default; override via "permissionMode" in the
+#                              project's .devcontainer/claude-task.json.
 #   claude-task --plan <branch>    Same, but start Claude explicitly in plan mode.
 #   claude-task --shell <branch>   Open a zsh debug shell instead of Claude.
 #   claude-task --sync <branch>    Rebase onto origin/main, run tests, push, open/update PR.
@@ -14,7 +17,7 @@
 
 set -euo pipefail
 
-CLAUDE_TASK_VERSION="0.2.0"
+CLAUDE_TASK_VERSION="0.2.1"
 GITHUB_REPO="SebastianKuehnau/claude-container"
 GHCR_IMAGE="ghcr.io/sebastiankuehnau/claude-container"
 
@@ -23,6 +26,11 @@ GHCR_IMAGE="ghcr.io/sebastiankuehnau/claude-container"
 GLOBAL_CLAUDE_DIR="${HOME}/.claude-container/claude"
 GLOBAL_CLAUDE_JSON="${HOME}/.claude-container/claude.json"
 GLOBAL_M2_CACHE="${HOME}/.claude-m2-cache"
+
+# Host env vars forwarded into the container when the project config declares no
+# `passthroughEnv` array (or has no config file at all). Names only; values are
+# read from the host env at run time and never written to disk.
+DEFAULT_PASSTHROUGH_ENV=(OPENAI_API_KEY ANTHROPIC_API_KEY)
 
 info() { printf '%s\n' "$*" >&2; }
 err()  { printf 'Error: %s\n' "$*" >&2; }
@@ -34,7 +42,12 @@ claude-task — per-branch, containerized Claude Code sessions via git worktrees
 
 Usage:
   claude-task <branch>            Start (or attach to) a session for <branch>.
-  claude-task --plan <branch>     Same, but start Claude explicitly in plan mode.
+                                  Runs Claude Code with permission prompts
+                                  bypassed (YOLO) by default; override per
+                                  project via "permissionMode" (bypass|plan|ask)
+                                  in .devcontainer/claude-task.json.
+  claude-task --plan <branch>     Same, but start Claude explicitly in plan mode
+                                  (always wins over "permissionMode").
   claude-task --shell <branch>    Open a zsh debug shell instead of Claude.
   claude-task --sync <branch>     Rebase onto origin/main, test, push, open/update PR.
   claude-task --done <branch>     Stop the container and clean up the worktree.
@@ -134,6 +147,23 @@ config_path() {
 
 has_project_config() {
   [[ -f "$(config_path "$1")" ]]
+}
+
+# Resolves the list of host env var NAMES to forward into a worktree's
+# container, one per line, in this order of precedence:
+#   1. `passthroughEnv` present in .devcontainer/claude-task.json — authoritative
+#      (an explicit empty array [] forwards nothing);
+#   2. field absent, or no config file at all — the built-in DEFAULT set.
+# Only names are read from the (committed) config; values come from the host env
+# at forwarding time. Tolerates a missing file and a missing/null field.
+resolve_passthrough_env() {
+  local worktree="$1" cfg
+  cfg="$(config_path "$worktree")"
+  if [[ -f "$cfg" ]] && jq -e 'has("passthroughEnv")' "$cfg" >/dev/null 2>&1; then
+    jq -r '.passthroughEnv[]? // empty' "$cfg"
+    return 0
+  fi
+  printf '%s\n' "${DEFAULT_PASSTHROUGH_ENV[@]}"
 }
 
 cfg_get() {
@@ -314,6 +344,16 @@ build_run_args() {
   [[ -n "${VAADIN_PRO_KEY:-}" ]]   && RUN_ARGS+=(-e "VAADIN_PRO_KEY=${VAADIN_PRO_KEY}")
   [[ -n "${NOTIFICATION_URL:-}" ]] && RUN_ARGS+=(-e "NOTIFICATION_URL=${NOTIFICATION_URL}")
 
+  # Forward the project's passthrough env vars (config `passthroughEnv`, else the
+  # default set — see resolve_passthrough_env). Each name is forwarded ONLY when
+  # set and non-empty on the host, mirroring the fixed forwards above. Names must
+  # be valid shell identifiers; anything else is skipped defensively.
+  local _pt_var
+  while IFS= read -r _pt_var; do
+    [[ "$_pt_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!_pt_var:-}" ]] && RUN_ARGS+=(-e "${_pt_var}=${!_pt_var}")
+  done < <(resolve_passthrough_env "$worktree")
+
   # A git worktree's /workspace/.git is a FILE, not a directory: it points (by
   # absolute host path) into the main repo's .git/worktrees/<name>, and that
   # metadir's `commondir` points back up to the main repo's .git. Neither lives
@@ -354,12 +394,19 @@ cmd_start() {
   worktree="$(find_or_create_worktree "$main_repo_root" "$branch")"
   project="$(resolve_project_name "$main_repo_root" "$worktree")"
 
-  local image_tag cache_dir firewall container_name
+  local image_tag cache_dir firewall container_name perm_mode
   container_name="$(container_name_for "$project" "$branch")"
+  # Permission mode for a no-modifier start. Defaults to "bypass" (YOLO): the
+  # container is sandboxed (firewall allowlist, no host access), so permission
+  # prompts are pure friction. A project can opt out via "permissionMode" in
+  # claude-task.json ("bypass" | "plan" | "ask"). An explicit --plan modifier
+  # always wins (see the case block below).
+  perm_mode="bypass"
 
   if has_project_config "$worktree"; then
     local cfg; cfg="$(config_path "$worktree")"
     firewall="$(cfg_get "$cfg" '.firewall' 'allowlist')"
+    perm_mode="$(cfg_get "$cfg" '.permissionMode' 'bypass')"
     image_tag="$(image_tag_for_project "$project")"
     cache_dir="${main_repo_root}/.devcontainer/m2-cache"
     mkdir -p "$cache_dir"
@@ -386,7 +433,13 @@ cmd_start() {
   build_run_args "$worktree" "$image_tag" "$container_name" "$cache_dir" "$firewall" "$main_repo_root"
 
   case "$mode" in
-    claude) RUN_ARGS+=("$image_tag" claude) ;;
+    claude)
+      case "$perm_mode" in
+        bypass) RUN_ARGS+=("$image_tag" claude --dangerously-skip-permissions) ;;
+        plan)   RUN_ARGS+=("$image_tag" claude --permission-mode plan) ;;
+        ask)    RUN_ARGS+=("$image_tag" claude) ;;
+        *) die "Invalid permissionMode '$perm_mode' in claude-task.json (expected: bypass, plan, ask)." ;;
+      esac ;;
     plan)   RUN_ARGS+=("$image_tag" claude --permission-mode plan) ;;
     shell)  RUN_ARGS+=("$image_tag" /bin/zsh) ;;
     *) die "Internal error: unknown mode '$mode'" ;;
@@ -668,6 +721,10 @@ write_devcontainer_json() {
   "runArgs": [
     "--env-file", "${localWorkspaceFolder}/.devcontainer/devcontainer.env"
   ],
+  "containerEnv": {
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
+  },
   "mounts": [
     "source=${localEnv:HOME}/.claude-container/claude,target=/home/node/.claude,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.claude-container/claude.json,target=/home/node/.claude.json,type=bind,consistency=cached",
@@ -689,6 +746,12 @@ write_devcontainer_env_example() {
 #GH_TOKEN=github_pat_xxxxxxxxxxxx
 #GIT_USER_NAME=John Doe
 #GIT_USER_EMAIL=john.doe@email.de
+
+# AI-provider API keys. These are also forwarded automatically from your host
+# environment when set (see "passthroughEnv" in claude-task.json); set them
+# here only if you prefer keeping them in this git-ignored file.
+#OPENAI_API_KEY=sk-xxxxxxxxxxxx
+#ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxx
 
 # Local override for the claude-task container/image name. Wins over the
 # committed "name" in .devcontainer/claude-task.json; unset (or empty) falls
@@ -908,12 +971,15 @@ cmd_init() {
   read -rp "Project name [$default_name]: " name_val
   name_val="${name_val:-$default_name}"
 
-  local java_version java_vendor build_tool variant firewall mcp_csv plugins_csv
+  local java_version java_vendor build_tool variant firewall mcp_csv plugins_csv permission_mode
   java_version="$(ask_choice 'Java version' '25' '17,21,25')"
   java_vendor="$(ask_choice 'Java vendor' 'temurin' 'temurin,corretto,zulu')"
   build_tool="$(ask_choice 'Build tool' 'maven' 'maven,gradle,none')"
   variant="$(ask_choice 'Container variant' 'base' 'base,dind,opencode')"
   firewall="$(ask_choice 'Firewall profile' 'allowlist' 'open,allowlist')"
+  # Default permission mode for a no-modifier `claude-task <branch>` start.
+  # bypass = YOLO (no prompts), plan = plan-first review, ask = default prompts.
+  permission_mode="$(ask_choice 'Permission mode' 'bypass' 'bypass,plan,ask')"
 
   echo
   echo "MCP servers — comma-separated, from: github, context7, filesystem (blank for none)"
@@ -924,6 +990,13 @@ cmd_init() {
   echo "  vaadin-skills@vaadin-marketplace is already available image-wide — no need to list it."
   read -rp "Plugins []: " plugins_csv
 
+  echo
+  echo "Passthrough env — comma-separated host env var NAMES forwarded into the"
+  echo "  container when set (values stay on the host, never committed)."
+  local passthrough_default="OPENAI_API_KEY,ANTHROPIC_API_KEY" passthrough_csv
+  read -rp "Passthrough env [$passthrough_default]: " passthrough_csv
+  passthrough_csv="${passthrough_csv:-$passthrough_default}"
+
   mkdir -p "$project_dir/.devcontainer" "$project_dir/.claude" "$project_dir/tasks"
 
   local project_name_val
@@ -932,10 +1005,11 @@ cmd_init() {
   jq -n \
     --arg name "$name_val" \
     --arg jv "$java_version" --arg vendor "$java_vendor" --arg bt "$build_tool" \
-    --arg variant "$variant" --arg fw "$firewall" \
+    --arg variant "$variant" --arg fw "$firewall" --arg pm "$permission_mode" \
     --argjson mcp "$(printf '%s' "$mcp_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
     --argjson plugins "$(printf '%s' "$plugins_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
-    '{version: 1, name: $name, variant: $variant, java: {version: $jv, vendor: $vendor}, buildTool: $bt, firewall: $fw, mcpServers: $mcp, plugins: $plugins}' \
+    --argjson passthrough "$(printf '%s' "$passthrough_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
+    '{version: 1, name: $name, variant: $variant, java: {version: $jv, vendor: $vendor}, buildTool: $bt, firewall: $fw, permissionMode: $pm, mcpServers: $mcp, plugins: $plugins, passthroughEnv: $passthrough}' \
     > "$cfg"
 
   render_dockerfile "$project_dir/.devcontainer/claude-task.Dockerfile" "$variant" "$java_version" "$java_vendor" "$build_tool"

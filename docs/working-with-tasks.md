@@ -11,11 +11,19 @@ flow, see the README's "Install" / "New project" sections.
 ## Daily workflow
 
 ```bash
-claude-task <branch>          # start/attach a session for <branch>
+claude-task <branch>          # start/attach a session for <branch> (YOLO by default)
 claude-task --plan <branch>   # same, but start Claude explicitly in plan mode
 claude-task --shell <branch>  # open a zsh debug shell instead of Claude
 claude-task --done <branch>   # stop the container, remove the worktree
 ```
+
+By default `claude-task <branch>` runs Claude Code with permission prompts
+bypassed (`--dangerously-skip-permissions`) so it works uninterrupted inside the
+sandbox. The firewall allowlist, the lack of host access, and the
+`permissions.deny` rules (still enforced under bypass) remain the safety
+boundary. To change the default for a project, set `"permissionMode"` in
+`.devcontainer/claude-task.json` to `bypass` (default), `plan`, or `ask`. An
+explicit `--plan` on the command line always overrides that field.
 
 Each subcommand takes the branch name as its positional argument, plus
 optional modifiers: `--rebuild` (force a project image rebuild even if
@@ -107,6 +115,17 @@ firewall profile is deliberately excluded from the hash — it's a runtime
 mount/env concern, not baked into the image, so switching it never
 triggers a rebuild.
 
+**Host env passthrough:** the optional `passthroughEnv` array in
+`claude-task.json` lists host environment variable *names* to forward into the
+container. Each is passed via `-e NAME=$NAME` only when set and non-empty on the
+host, so values stay in your shell and never get committed. When the field is
+absent (or there is no config), the default set `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY` is forwarded; an empty array (`[]`) forwards nothing.
+`--init` seeds the field with the two defaults. This is a runtime concern and,
+like the firewall profile, is excluded from the image hash. Forwarding a
+non-default provider key may also require allowlisting its domain in
+`allowed-domains.conf`.
+
 **Container naming:** `claude-<name>-<branch>` (and the project image is
 `claude-task-<name>:latest`). Both `<name>` and `<branch>` are sanitized
 (lowercased, disallowed characters collapsed to `-`) to satisfy Docker's
@@ -148,6 +167,19 @@ a shared, bind-mounted repository.
 
 Projects without a `claude-task.json` keep using the global
 `~/.claude-m2-cache`, exactly as before.
+
+### Build-tool wrapper exec bits
+
+A git worktree is created on the host and bind-mounted into the container
+(`:delegated`). The executable bit on the build-tool wrappers `mvnw` / `gradlew`
+can be lost crossing that mount, so `./mvnw` fails and you'd have to fall back to
+the image's `mvn`/`gradle` by hand. On every start the container entrypoint
+restores that bit for `/workspace/mvnw` and `/workspace/gradlew` — but only for
+wrappers git itself records as executable (index mode `100755`), so it never
+turns a clean worktree dirty. A wrapper git tracks as non-executable is left
+untouched (that project is meant to use the system `mvn`/`gradle`). The `--sync`
+path already guards this independently with `if [[ -x ./mvnw ]]; then ./mvnw …;
+else mvn …; fi`.
 
 ## `--sync`: rebase, test, push, PR
 

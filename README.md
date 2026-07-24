@@ -262,11 +262,19 @@ written once and never overwritten.
 Daily use after that:
 ```bash
 claude-task <branch>          # start/attach a session (own git worktree + container)
+                               # runs Claude uninterrupted (YOLO) by default
 claude-task --plan <branch>   # same, but start Claude explicitly in plan mode
 claude-task --shell <branch>  # debug shell instead of Claude
 claude-task --done <branch>   # stop the container, remove the worktree
                                # (refuses if there's uncommitted/unpushed work)
 ```
+
+By default a session runs with permission prompts bypassed
+(`--dangerously-skip-permissions`) — the container sandbox (firewall allowlist,
+no host access) and the `permissions.deny` rules are the safety boundary. Set
+`"permissionMode"` (`bypass` \| `plan` \| `ask`) in
+`.devcontainer/claude-task.json` to change the per-project default; `--plan`
+always overrides it.
 
 Projects that never ran `--init` keep exactly today's behavior — global
 image, global Maven cache, zero regression. Full workflow and design

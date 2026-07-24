@@ -18,7 +18,8 @@ This repository contains a Docker container setup for running AI coding agents (
 this repo — see README "Install") that runs Claude Code per branch, one git
 worktree each, in a container. `claude-task --init` scaffolds a
 project-specific `.devcontainer/claude-task.json` (name, Java version/vendor,
-build tool, container variant, firewall profile, MCP servers, plugins); a
+build tool, container variant, firewall profile, permission mode, MCP servers,
+plugins, passthrough env); a
 project with this file gets its own image (`claude-task-<name>:latest`,
 built `FROM` the published GHCR base image + a SDKMAN layer) and a
 worktree-shared Maven cache at `<main-repo-root>/.devcontainer/m2-cache`.
@@ -29,6 +30,21 @@ git-ignored `.devcontainer/devcontainer.env` (local override) → the committed
 Projects without the config file and without an override keep the global
 image/cache behavior and directory-derived name unchanged. Full workflow:
 [docs/working-with-tasks.md](docs/working-with-tasks.md).
+
+### Permission mode (YOLO by default)
+
+A no-modifier `claude-task <branch>` starts Claude Code with permission prompts
+bypassed (`claude --dangerously-skip-permissions`), so it works uninterrupted;
+the sandbox (firewall allowlist + no host access) and the `.claude/settings.json`
+`permissions.deny` rules — which still block even under bypass — are the real
+safety boundary, not the prompts. Precedence: an explicit `--plan` modifier wins,
+then the optional `permissionMode` field (`bypass` | `plan` | `ask`) in
+`claude-task.json`, then the built-in `bypass` default. The `base`/`dind`
+entrypoint no longer pins a `defaultMode`; the launch command chosen by
+`bin/claude-task` is authoritative (and a stale `permissions.defaultMode` from
+the persistent `~/.claude` mount is cleared on start). Direct
+`docker-compose`/`devcontainer` usage is unaffected by the bypass default: those
+paths start Claude in its built-in prompting mode.
 
 ## Build Variants
 
@@ -94,8 +110,25 @@ Key environment variables:
 | `VAADIN_PRO_KEY` | Vaadin commercial license key |
 | `NOTIFICATION_URL` | URL called when Claude is idle (e.g. ntfy.sh) |
 | `SKIP_FIREWALL` | Set to `1` to disable firewall init |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | AI-provider keys; forwarded from the host into the container when set (see host env passthrough below) |
 
 The devcontainer additionally uses `.devcontainer/devcontainer.env` (gitignored) for secrets. It is seeded copy-if-missing from `.devcontainer/devcontainer.env.example` by the `initializeCommand` (never overwriting an edited file) and passed via `--env-file`.
+
+### Host env passthrough
+
+Host-exported environment variables can be forwarded into the container without
+writing secrets into a committed file. `bin/claude-task` reads an optional
+`passthroughEnv` array of variable *names* from `.devcontainer/claude-task.json`
+and forwards each name via `-e NAME=$NAME` **only when it is set and non-empty
+on the host** (values never touch disk). If the field is absent (or there is no
+config file), the built-in default set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` is
+forwarded; an explicit empty array (`[]`) forwards nothing. `docker-compose.yml`
+and the `devcontainer*.json` variants are static and cannot read that array, so
+they carry the default key set only, wired in via `${VAR:-}` (compose) /
+`${localEnv:VAR}` (devcontainer). Note: forwarding a non-default provider key
+via `passthroughEnv` may additionally require allowlisting that provider's
+domain in `.devcontainer/allowed-domains.conf` (`api.openai.com` and
+`api.anthropic.com` are already allowed).
 
 ## Architecture
 
@@ -136,6 +169,14 @@ sudo iptables -L -n -v  # inspect current rules
 ## Java / Vaadin Development
 
 The image includes Java 25 (Temurin JDK). Maven cache is mounted at `/home/node/.m2` (bind mount from host) to persist between container rebuilds. The `VAADIN_PRO_KEY` env var activates commercial Vaadin components.
+
+**Build-tool wrapper exec bits:** on start, the entrypoint (`entrypoint.sh` /
+`entrypoint-opencode.sh`) restores the executable bit on `/workspace/mvnw` and
+`/workspace/gradlew` when it was lost crossing the host→container bind mount, so
+`./mvnw` / `./gradlew` work without a manual `chmod`. It only repairs wrappers
+git itself records as executable (index mode `100755`), so it never dirties the
+worktree; a wrapper git tracks as non-executable is left alone (use the
+image-provided `mvn`/`gradle` instead).
 
 ## Keeping This File In Sync
 
