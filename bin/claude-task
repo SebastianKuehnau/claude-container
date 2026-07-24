@@ -3,6 +3,9 @@
 #
 # Usage:
 #   claude-task <branch>       Start (or attach to) a Claude Code session for <branch>.
+#                              Runs with permission prompts bypassed (YOLO) by
+#                              default; override via "permissionMode" in the
+#                              project's .devcontainer/claude-task.json.
 #   claude-task --plan <branch>    Same, but start Claude explicitly in plan mode.
 #   claude-task --shell <branch>   Open a zsh debug shell instead of Claude.
 #   claude-task --sync <branch>    Rebase onto origin/main, run tests, push, open/update PR.
@@ -39,7 +42,12 @@ claude-task — per-branch, containerized Claude Code sessions via git worktrees
 
 Usage:
   claude-task <branch>            Start (or attach to) a session for <branch>.
-  claude-task --plan <branch>     Same, but start Claude explicitly in plan mode.
+                                  Runs Claude Code with permission prompts
+                                  bypassed (YOLO) by default; override per
+                                  project via "permissionMode" (bypass|plan|ask)
+                                  in .devcontainer/claude-task.json.
+  claude-task --plan <branch>     Same, but start Claude explicitly in plan mode
+                                  (always wins over "permissionMode").
   claude-task --shell <branch>    Open a zsh debug shell instead of Claude.
   claude-task --sync <branch>     Rebase onto origin/main, test, push, open/update PR.
   claude-task --done <branch>     Stop the container and clean up the worktree.
@@ -386,12 +394,19 @@ cmd_start() {
   worktree="$(find_or_create_worktree "$main_repo_root" "$branch")"
   project="$(resolve_project_name "$main_repo_root" "$worktree")"
 
-  local image_tag cache_dir firewall container_name
+  local image_tag cache_dir firewall container_name perm_mode
   container_name="$(container_name_for "$project" "$branch")"
+  # Permission mode for a no-modifier start. Defaults to "bypass" (YOLO): the
+  # container is sandboxed (firewall allowlist, no host access), so permission
+  # prompts are pure friction. A project can opt out via "permissionMode" in
+  # claude-task.json ("bypass" | "plan" | "ask"). An explicit --plan modifier
+  # always wins (see the case block below).
+  perm_mode="bypass"
 
   if has_project_config "$worktree"; then
     local cfg; cfg="$(config_path "$worktree")"
     firewall="$(cfg_get "$cfg" '.firewall' 'allowlist')"
+    perm_mode="$(cfg_get "$cfg" '.permissionMode' 'bypass')"
     image_tag="$(image_tag_for_project "$project")"
     cache_dir="${main_repo_root}/.devcontainer/m2-cache"
     mkdir -p "$cache_dir"
@@ -418,7 +433,13 @@ cmd_start() {
   build_run_args "$worktree" "$image_tag" "$container_name" "$cache_dir" "$firewall" "$main_repo_root"
 
   case "$mode" in
-    claude) RUN_ARGS+=("$image_tag" claude) ;;
+    claude)
+      case "$perm_mode" in
+        bypass) RUN_ARGS+=("$image_tag" claude --dangerously-skip-permissions) ;;
+        plan)   RUN_ARGS+=("$image_tag" claude --permission-mode plan) ;;
+        ask)    RUN_ARGS+=("$image_tag" claude) ;;
+        *) die "Invalid permissionMode '$perm_mode' in claude-task.json (expected: bypass, plan, ask)." ;;
+      esac ;;
     plan)   RUN_ARGS+=("$image_tag" claude --permission-mode plan) ;;
     shell)  RUN_ARGS+=("$image_tag" /bin/zsh) ;;
     *) die "Internal error: unknown mode '$mode'" ;;
@@ -950,12 +971,15 @@ cmd_init() {
   read -rp "Project name [$default_name]: " name_val
   name_val="${name_val:-$default_name}"
 
-  local java_version java_vendor build_tool variant firewall mcp_csv plugins_csv
+  local java_version java_vendor build_tool variant firewall mcp_csv plugins_csv permission_mode
   java_version="$(ask_choice 'Java version' '25' '17,21,25')"
   java_vendor="$(ask_choice 'Java vendor' 'temurin' 'temurin,corretto,zulu')"
   build_tool="$(ask_choice 'Build tool' 'maven' 'maven,gradle,none')"
   variant="$(ask_choice 'Container variant' 'base' 'base,dind,opencode')"
   firewall="$(ask_choice 'Firewall profile' 'allowlist' 'open,allowlist')"
+  # Default permission mode for a no-modifier `claude-task <branch>` start.
+  # bypass = YOLO (no prompts), plan = plan-first review, ask = default prompts.
+  permission_mode="$(ask_choice 'Permission mode' 'bypass' 'bypass,plan,ask')"
 
   echo
   echo "MCP servers — comma-separated, from: github, context7, filesystem (blank for none)"
@@ -981,11 +1005,11 @@ cmd_init() {
   jq -n \
     --arg name "$name_val" \
     --arg jv "$java_version" --arg vendor "$java_vendor" --arg bt "$build_tool" \
-    --arg variant "$variant" --arg fw "$firewall" \
+    --arg variant "$variant" --arg fw "$firewall" --arg pm "$permission_mode" \
     --argjson mcp "$(printf '%s' "$mcp_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
     --argjson plugins "$(printf '%s' "$plugins_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
     --argjson passthrough "$(printf '%s' "$passthrough_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
-    '{version: 1, name: $name, variant: $variant, java: {version: $jv, vendor: $vendor}, buildTool: $bt, firewall: $fw, mcpServers: $mcp, plugins: $plugins, passthroughEnv: $passthrough}' \
+    '{version: 1, name: $name, variant: $variant, java: {version: $jv, vendor: $vendor}, buildTool: $bt, firewall: $fw, permissionMode: $pm, mcpServers: $mcp, plugins: $plugins, passthroughEnv: $passthrough}' \
     > "$cfg"
 
   render_dockerfile "$project_dir/.devcontainer/claude-task.Dockerfile" "$variant" "$java_version" "$java_vendor" "$build_tool"

@@ -124,19 +124,18 @@ STATUSEOF
     fi
 fi
 
-# Start Claude Code in Plan mode by default (never bypass mode). Bypass mode
-# cannot be set via settings anyway — it only activates through the
-# --dangerously-skip-permissions CLI flag — so we just pin the default
-# permission mode to "plan" on every start, preserving any other permissions.
+# The permission mode is decided by the launch command that the caller passes
+# (e.g. `claude --dangerously-skip-permissions` for the default YOLO mode, or
+# `claude --permission-mode plan` for a plan-first review) — see bin/claude-task.
+# Because ~/.claude is a persistent host bind mount, a previously pinned
+# defaultMode could otherwise linger and contradict the launched mode, so we drop
+# that key on every start and let the CLI flag be the single source of truth.
 CLAUDE_SETTINGS="${CLAUDE_CONFIG_DIR:-/home/node/.claude}/settings.json"
-mkdir -p "$(dirname "${CLAUDE_SETTINGS}")"
 if [[ -f "${CLAUDE_SETTINGS}" ]]; then
-    UPDATED=$(jq '.permissions.defaultMode = "plan"' "${CLAUDE_SETTINGS}")
+    UPDATED=$(jq 'if .permissions | type == "object" then .permissions |= del(.defaultMode) else . end' "${CLAUDE_SETTINGS}")
     echo "${UPDATED}" > "${CLAUDE_SETTINGS}"
-else
-    echo '{"permissions":{"defaultMode":"plan"}}' > "${CLAUDE_SETTINGS}"
+    echo "Cleared any pinned permission defaultMode; the launch command is authoritative."
 fi
-echo "Default permission mode set to: plan"
 
 # Apply the language policy to the user-level CLAUDE.md (global memory):
 # converse in German, but keep code, comments and docs in English.
