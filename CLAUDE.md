@@ -155,6 +155,14 @@ sudo iptables -L -n -v  # inspect current rules
 
 The image includes Java 25 (Temurin JDK). Maven cache is mounted at `/home/node/.m2` (bind mount from host) to persist between container rebuilds. The `VAADIN_PRO_KEY` env var activates commercial Vaadin components.
 
+**Build-tool wrapper exec bits:** on start, the entrypoint (`entrypoint.sh` /
+`entrypoint-opencode.sh`) restores the executable bit on `/workspace/mvnw` and
+`/workspace/gradlew` when it was lost crossing the host→container bind mount, so
+`./mvnw` / `./gradlew` work without a manual `chmod`. It only repairs wrappers
+git itself records as executable (index mode `100755`), so it never dirties the
+worktree; a wrapper git tracks as non-executable is left alone (use the
+image-provided `mvn`/`gradle` instead).
+
 ## Keeping This File In Sync
 
 A `Stop` hook (`.claude/hooks/claude-md-sync.sh`, wired up in `.claude/settings.json`) checks at the end of each task whether code/config files changed without a corresponding `CLAUDE.md` update. If so, it prompts Claude once to review and update this file. Update `CLAUDE.md` whenever you add/rename scripts, change build/run commands, or add configuration/env variables.

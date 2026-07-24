@@ -160,6 +160,19 @@ a shared, bind-mounted repository.
 Projects without a `claude-task.json` keep using the global
 `~/.claude-m2-cache`, exactly as before.
 
+### Build-tool wrapper exec bits
+
+A git worktree is created on the host and bind-mounted into the container
+(`:delegated`). The executable bit on the build-tool wrappers `mvnw` / `gradlew`
+can be lost crossing that mount, so `./mvnw` fails and you'd have to fall back to
+the image's `mvn`/`gradle` by hand. On every start the container entrypoint
+restores that bit for `/workspace/mvnw` and `/workspace/gradlew` — but only for
+wrappers git itself records as executable (index mode `100755`), so it never
+turns a clean worktree dirty. A wrapper git tracks as non-executable is left
+untouched (that project is meant to use the system `mvn`/`gradle`). The `--sync`
+path already guards this independently with `if [[ -x ./mvnw ]]; then ./mvnw …;
+else mvn …; fi`.
+
 ## `--sync`: rebase, test, push, PR
 
 `claude-task --sync <branch>` brings a finished branch up to date with the

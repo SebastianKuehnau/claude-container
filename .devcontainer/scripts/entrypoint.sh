@@ -193,5 +193,28 @@ if command -v /usr/local/bin/init-vaadin-plugins.sh &> /dev/null; then
     /usr/local/bin/init-vaadin-plugins.sh
 fi
 
+# Restore build-tool wrapper executable bits that can be lost when the host git
+# worktree is bind-mounted into the container. Only wrappers that git itself
+# records as executable (index mode 100755) are repaired, so this can never
+# introduce a spurious `git status` change; a wrapper git tracks as
+# non-executable is left untouched (use the image-provided mvn/gradle instead).
+# No-op when /workspace is not a git repo or the wrapper is absent.
+restore_wrapper_exec_bits() {
+    command -v git &> /dev/null || return 0
+    git -C /workspace rev-parse --is-inside-work-tree &> /dev/null || return 0
+    local w mode
+    for w in mvnw gradlew; do
+        [[ -f "/workspace/${w}" ]] || continue
+        mode=$(git -C /workspace ls-files -s -- "$w" 2>/dev/null | awk '{print $1}')
+        if [[ "$mode" == "100755" && ! -x "/workspace/${w}" ]]; then
+            chmod +x "/workspace/${w}" 2>/dev/null \
+                && echo "Restored executable bit on ./${w} (git-tracked as executable)." \
+                || true
+        fi
+    done
+    return 0
+}
+restore_wrapper_exec_bits
+
 # Execute the passed command (or default to zsh)
 exec "$@"
