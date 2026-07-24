@@ -31,6 +31,8 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - DEVCONTAINER=true
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - NOTIFICATION_URL=${NOTIFICATION_URL:-}
     working_dir: /workspace
     stdin_open: true
@@ -73,6 +75,8 @@ services:
       - DEVCONTAINER=true
       - DOCKER_HOST=unix:///var/run/docker.sock
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - NOTIFICATION_URL=${NOTIFICATION_URL:-}
     working_dir: /workspace
     stdin_open: true
@@ -111,6 +115,8 @@ services:
       - DEVCONTAINER=true
       - DOCKER_HOST=unix:///var/run/docker.sock
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - NOTIFICATION_URL=${NOTIFICATION_URL:-}
     working_dir: /workspace
     stdin_open: true
@@ -146,6 +152,8 @@ services:
       - NODE_OPTIONS=--max-old-space-size=4096
       - DEVCONTAINER=true
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     working_dir: /workspace
     stdin_open: true
     tty: true
@@ -184,6 +192,8 @@ services:
       - DEVCONTAINER=true
       - DOCKER_HOST=unix:///var/run/docker.sock
       - VAADIN_PRO_KEY=${VAADIN_PRO_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     working_dir: /workspace
     stdin_open: true
     tty: true
