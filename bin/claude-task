@@ -24,6 +24,11 @@ GLOBAL_CLAUDE_DIR="${HOME}/.claude-container/claude"
 GLOBAL_CLAUDE_JSON="${HOME}/.claude-container/claude.json"
 GLOBAL_M2_CACHE="${HOME}/.claude-m2-cache"
 
+# Host env vars forwarded into the container when the project config declares no
+# `passthroughEnv` array (or has no config file at all). Names only; values are
+# read from the host env at run time and never written to disk.
+DEFAULT_PASSTHROUGH_ENV=(OPENAI_API_KEY ANTHROPIC_API_KEY)
+
 info() { printf '%s\n' "$*" >&2; }
 err()  { printf 'Error: %s\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
@@ -134,6 +139,23 @@ config_path() {
 
 has_project_config() {
   [[ -f "$(config_path "$1")" ]]
+}
+
+# Resolves the list of host env var NAMES to forward into a worktree's
+# container, one per line, in this order of precedence:
+#   1. `passthroughEnv` present in .devcontainer/claude-task.json — authoritative
+#      (an explicit empty array [] forwards nothing);
+#   2. field absent, or no config file at all — the built-in DEFAULT set.
+# Only names are read from the (committed) config; values come from the host env
+# at forwarding time. Tolerates a missing file and a missing/null field.
+resolve_passthrough_env() {
+  local worktree="$1" cfg
+  cfg="$(config_path "$worktree")"
+  if [[ -f "$cfg" ]] && jq -e 'has("passthroughEnv")' "$cfg" >/dev/null 2>&1; then
+    jq -r '.passthroughEnv[]? // empty' "$cfg"
+    return 0
+  fi
+  printf '%s\n' "${DEFAULT_PASSTHROUGH_ENV[@]}"
 }
 
 cfg_get() {
@@ -313,6 +335,16 @@ build_run_args() {
   [[ -n "${GIT_USER_EMAIL:-}" ]]   && RUN_ARGS+=(-e "GIT_USER_EMAIL=${GIT_USER_EMAIL}")
   [[ -n "${VAADIN_PRO_KEY:-}" ]]   && RUN_ARGS+=(-e "VAADIN_PRO_KEY=${VAADIN_PRO_KEY}")
   [[ -n "${NOTIFICATION_URL:-}" ]] && RUN_ARGS+=(-e "NOTIFICATION_URL=${NOTIFICATION_URL}")
+
+  # Forward the project's passthrough env vars (config `passthroughEnv`, else the
+  # default set — see resolve_passthrough_env). Each name is forwarded ONLY when
+  # set and non-empty on the host, mirroring the fixed forwards above. Names must
+  # be valid shell identifiers; anything else is skipped defensively.
+  local _pt_var
+  while IFS= read -r _pt_var; do
+    [[ "$_pt_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!_pt_var:-}" ]] && RUN_ARGS+=(-e "${_pt_var}=${!_pt_var}")
+  done < <(resolve_passthrough_env "$worktree")
 
   # A git worktree's /workspace/.git is a FILE, not a directory: it points (by
   # absolute host path) into the main repo's .git/worktrees/<name>, and that
@@ -668,6 +700,10 @@ write_devcontainer_json() {
   "runArgs": [
     "--env-file", "${localWorkspaceFolder}/.devcontainer/devcontainer.env"
   ],
+  "containerEnv": {
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
+  },
   "mounts": [
     "source=${localEnv:HOME}/.claude-container/claude,target=/home/node/.claude,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.claude-container/claude.json,target=/home/node/.claude.json,type=bind,consistency=cached",
@@ -689,6 +725,12 @@ write_devcontainer_env_example() {
 #GH_TOKEN=github_pat_xxxxxxxxxxxx
 #GIT_USER_NAME=John Doe
 #GIT_USER_EMAIL=john.doe@email.de
+
+# AI-provider API keys. These are also forwarded automatically from your host
+# environment when set (see "passthroughEnv" in claude-task.json); set them
+# here only if you prefer keeping them in this git-ignored file.
+#OPENAI_API_KEY=sk-xxxxxxxxxxxx
+#ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxx
 
 # Local override for the claude-task container/image name. Wins over the
 # committed "name" in .devcontainer/claude-task.json; unset (or empty) falls
@@ -924,6 +966,13 @@ cmd_init() {
   echo "  vaadin-skills@vaadin-marketplace is already available image-wide — no need to list it."
   read -rp "Plugins []: " plugins_csv
 
+  echo
+  echo "Passthrough env — comma-separated host env var NAMES forwarded into the"
+  echo "  container when set (values stay on the host, never committed)."
+  local passthrough_default="OPENAI_API_KEY,ANTHROPIC_API_KEY" passthrough_csv
+  read -rp "Passthrough env [$passthrough_default]: " passthrough_csv
+  passthrough_csv="${passthrough_csv:-$passthrough_default}"
+
   mkdir -p "$project_dir/.devcontainer" "$project_dir/.claude" "$project_dir/tasks"
 
   local project_name_val
@@ -935,7 +984,8 @@ cmd_init() {
     --arg variant "$variant" --arg fw "$firewall" \
     --argjson mcp "$(printf '%s' "$mcp_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
     --argjson plugins "$(printf '%s' "$plugins_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
-    '{version: 1, name: $name, variant: $variant, java: {version: $jv, vendor: $vendor}, buildTool: $bt, firewall: $fw, mcpServers: $mcp, plugins: $plugins}' \
+    --argjson passthrough "$(printf '%s' "$passthrough_csv" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' | jq -R . | jq -s .)" \
+    '{version: 1, name: $name, variant: $variant, java: {version: $jv, vendor: $vendor}, buildTool: $bt, firewall: $fw, mcpServers: $mcp, plugins: $plugins, passthroughEnv: $passthrough}' \
     > "$cfg"
 
   render_dockerfile "$project_dir/.devcontainer/claude-task.Dockerfile" "$variant" "$java_version" "$java_vendor" "$build_tool"
