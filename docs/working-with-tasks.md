@@ -107,6 +107,17 @@ firewall profile is deliberately excluded from the hash — it's a runtime
 mount/env concern, not baked into the image, so switching it never
 triggers a rebuild.
 
+**Host env passthrough:** the optional `passthroughEnv` array in
+`claude-task.json` lists host environment variable *names* to forward into the
+container. Each is passed via `-e NAME=$NAME` only when set and non-empty on the
+host, so values stay in your shell and never get committed. When the field is
+absent (or there is no config), the default set `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY` is forwarded; an empty array (`[]`) forwards nothing.
+`--init` seeds the field with the two defaults. This is a runtime concern and,
+like the firewall profile, is excluded from the image hash. Forwarding a
+non-default provider key may also require allowlisting its domain in
+`allowed-domains.conf`.
+
 **Container naming:** `claude-<name>-<branch>` (and the project image is
 `claude-task-<name>:latest`). Both `<name>` and `<branch>` are sanitized
 (lowercased, disallowed characters collapsed to `-`) to satisfy Docker's

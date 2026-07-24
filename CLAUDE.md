@@ -18,7 +18,8 @@ This repository contains a Docker container setup for running AI coding agents (
 this repo — see README "Install") that runs Claude Code per branch, one git
 worktree each, in a container. `claude-task --init` scaffolds a
 project-specific `.devcontainer/claude-task.json` (name, Java version/vendor,
-build tool, container variant, firewall profile, MCP servers, plugins); a
+build tool, container variant, firewall profile, MCP servers, plugins,
+passthrough env); a
 project with this file gets its own image (`claude-task-<name>:latest`,
 built `FROM` the published GHCR base image + a SDKMAN layer) and a
 worktree-shared Maven cache at `<main-repo-root>/.devcontainer/m2-cache`.
@@ -94,8 +95,25 @@ Key environment variables:
 | `VAADIN_PRO_KEY` | Vaadin commercial license key |
 | `NOTIFICATION_URL` | URL called when Claude is idle (e.g. ntfy.sh) |
 | `SKIP_FIREWALL` | Set to `1` to disable firewall init |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | AI-provider keys; forwarded from the host into the container when set (see host env passthrough below) |
 
 The devcontainer additionally uses `.devcontainer/devcontainer.env` (gitignored) for secrets. It is seeded copy-if-missing from `.devcontainer/devcontainer.env.example` by the `initializeCommand` (never overwriting an edited file) and passed via `--env-file`.
+
+### Host env passthrough
+
+Host-exported environment variables can be forwarded into the container without
+writing secrets into a committed file. `bin/claude-task` reads an optional
+`passthroughEnv` array of variable *names* from `.devcontainer/claude-task.json`
+and forwards each name via `-e NAME=$NAME` **only when it is set and non-empty
+on the host** (values never touch disk). If the field is absent (or there is no
+config file), the built-in default set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` is
+forwarded; an explicit empty array (`[]`) forwards nothing. `docker-compose.yml`
+and the `devcontainer*.json` variants are static and cannot read that array, so
+they carry the default key set only, wired in via `${VAR:-}` (compose) /
+`${localEnv:VAR}` (devcontainer). Note: forwarding a non-default provider key
+via `passthroughEnv` may additionally require allowlisting that provider's
+domain in `.devcontainer/allowed-domains.conf` (`api.openai.com` and
+`api.anthropic.com` are already allowed).
 
 ## Architecture
 
