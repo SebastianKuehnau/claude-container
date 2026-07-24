@@ -18,8 +18,8 @@ This repository contains a Docker container setup for running AI coding agents (
 this repo — see README "Install") that runs Claude Code per branch, one git
 worktree each, in a container. `claude-task --init` scaffolds a
 project-specific `.devcontainer/claude-task.json` (name, Java version/vendor,
-build tool, container variant, firewall profile, MCP servers, plugins,
-passthrough env); a
+build tool, container variant, firewall profile, permission mode, MCP servers,
+plugins, passthrough env); a
 project with this file gets its own image (`claude-task-<name>:latest`,
 built `FROM` the published GHCR base image + a SDKMAN layer) and a
 worktree-shared Maven cache at `<main-repo-root>/.devcontainer/m2-cache`.
@@ -30,6 +30,21 @@ git-ignored `.devcontainer/devcontainer.env` (local override) → the committed
 Projects without the config file and without an override keep the global
 image/cache behavior and directory-derived name unchanged. Full workflow:
 [docs/working-with-tasks.md](docs/working-with-tasks.md).
+
+### Permission mode (YOLO by default)
+
+A no-modifier `claude-task <branch>` starts Claude Code with permission prompts
+bypassed (`claude --dangerously-skip-permissions`), so it works uninterrupted;
+the sandbox (firewall allowlist + no host access) and the `.claude/settings.json`
+`permissions.deny` rules — which still block even under bypass — are the real
+safety boundary, not the prompts. Precedence: an explicit `--plan` modifier wins,
+then the optional `permissionMode` field (`bypass` | `plan` | `ask`) in
+`claude-task.json`, then the built-in `bypass` default. The `base`/`dind`
+entrypoint no longer pins a `defaultMode`; the launch command chosen by
+`bin/claude-task` is authoritative (and a stale `permissions.defaultMode` from
+the persistent `~/.claude` mount is cleared on start). Direct
+`docker-compose`/`devcontainer` usage is unaffected by the bypass default: those
+paths start Claude in its built-in prompting mode.
 
 ## Build Variants
 
